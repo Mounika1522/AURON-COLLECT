@@ -1,0 +1,42 @@
+{
+  "name": "auron-collect-backend",
+  "version": "1.0.0",
+  "description": "Auron Collect Backend API",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "postinstall": "prisma generate",
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test:dashboard": "node --test src/services/dashboard-metrics.service.test.js src/services/dashboard-filters.service.test.js src/services/dashboard-access.service.test.js src/services/admin-notification.service.test.js src/middleware/dashboard-access.middleware.test.js",
+    "test:auth": "node --test src/controllers/auth.integration.test.js",
+    "test:safety": "node --test src/config/runtime-safety.test.js",
+    "test:portal": "node --test src/controllers/customer-portal.integration.test.js",
+    "test:customer-plans": "node --test src/services/customer-subscription-plan.service.test.js src/controllers/customer-subscription-plan.integration.test.js",
+    "test:billing": "node --test src/services/razorpay.service.test.js src/services/subscription-billing.service.test.js src/services/subscription-limits.service.test.js src/services/customer-subscription.service.test.js src/services/customer-assistant.service.test.js src/controllers/customer-billing-pdf.test.js"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "axios": "^1.21.1",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.4",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^10.6.0",
+    "pdfkit": "^0.20.2",
+    "razorpay": "^2.9.8",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "prisma": "^6.19.3"
+  }
+}
