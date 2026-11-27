@@ -30,6 +30,7 @@ import {
 } from './services/reminder-actions';
 import AdminSidebar from './components/AdminSidebar';
 import AdminHeader from './components/AdminHeader';
+import StaffPasswordRecovery from './components/StaffPasswordRecovery';
 import AIAssistant from './components/AIAssistant';
 import DataTableTools from './components/DataTableTools';
 import {
@@ -55,6 +56,24 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 const INITIAL_DASHBOARD_TODAY = todayISO();
 const INITIAL_DASHBOARD_MONTH_START = `${INITIAL_DASHBOARD_TODAY.slice(0, 7)}-01`;
 const DASHBOARD_UNASSIGNED_EXECUTIVE = '__UNASSIGNED__';
+
+const readStaffPasswordResetToken = () => {
+  if (typeof window === 'undefined') return '';
+  return new URLSearchParams(window.location.hash.slice(1)).get('staffReset') || '';
+};
+
+const removeStaffPasswordResetFragment = () => {
+  const url = new URL(window.location.href);
+  const parameters = new URLSearchParams(url.hash.slice(1));
+  if (!parameters.has('staffReset')) return;
+  parameters.delete('staffReset');
+  url.hash = parameters.toString();
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${url.pathname}${url.search}${url.hash}`,
+  );
+};
 
 const formatINR = (num) => {
   return new Intl.NumberFormat('en-IN', {
@@ -488,7 +507,16 @@ export default function App() {
   const [staffEmail, setStaffEmail] = useState('');
   const [staffPassword, setStaffPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [staffResetToken, setStaffResetToken] = useState(readStaffPasswordResetToken);
+  const [showForgotModal, setShowForgotModal] = useState(
+    () => Boolean(readStaffPasswordResetToken()),
+  );
+  const staffResetFlowRef = useRef(Boolean(readStaffPasswordResetToken()));
+  const closeStaffPasswordRecovery = useCallback(() => {
+    setShowForgotModal(false);
+    setStaffResetToken('');
+    removeStaffPasswordResetFragment();
+  }, []);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 const [authToken, setAuthToken] = useState('');
   const [customerToken, setCustomerToken] = useState('');
@@ -899,6 +927,10 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [activePlan, setActivePlan] = useState('');
 
   useEffect(() => {
+    if (staffResetFlowRef.current) removeStaffPasswordResetFragment();
+  }, []);
+
+  useEffect(() => {
     const hasOpenLayer = showForgotModal || newReceiptModal || newInvoiceModal ||
       newCustomerModal || editCustomerModal || showTaskForm || showPromiseForm ||
       showDisputeForm || showAdjustmentForm || showReminderForm || showTemplateForm ||
@@ -920,7 +952,7 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
       else if (newReceiptModal) setNewReceiptModal(false);
       else if (newCustomerModal) setNewCustomerModal(false);
       else if (isCustomerDrawerOpen) setIsCustomerDrawerOpen(false);
-      else if (showForgotModal) setShowForgotModal(false);
+      else if (showForgotModal) closeStaffPasswordRecovery();
       else return;
 
       event.preventDefault();
@@ -942,7 +974,8 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
     showReminderForm,
     showTemplateForm,
     showCommunicationForm,
-    isCustomerDrawerOpen
+    isCustomerDrawerOpen,
+    closeStaffPasswordRecovery
   ]);
 
   // AI Assistant State
@@ -958,6 +991,19 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
   const showToast = (msg, type = 'default') => {
     setToastMessage({ message: msg, type });
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const handleStaffPasswordResetSuccess = () => {
+    localStorage.removeItem('auron_collect_token');
+    localStorage.removeItem('auron_collect_user');
+    setAuthToken('');
+    setCurrentUser(null);
+    setCurrentRole('');
+    setStaffPassword('');
+    setAuthTab('staff');
+    setPortalMode('auth');
+    closeStaffPasswordRecovery();
+    showToast('Your password was reset. Sign in with your new password.');
   };
 
   const handleStaffPasswordChanged = (token) => {
@@ -991,6 +1037,7 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
   };
 
   useEffect(() => {
+    if (staffResetFlowRef.current) return undefined;
     const savedToken = localStorage.getItem('auron_collect_token');
     if (!savedToken) return undefined;
 
@@ -1049,6 +1096,7 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
   }, []);
 
   useEffect(() => {
+    if (staffResetFlowRef.current) return undefined;
     if (localStorage.getItem('auron_collect_token')) return undefined;
     const savedToken = localStorage.getItem('auron_customer_token');
     if (!savedToken) return undefined;
@@ -3434,34 +3482,19 @@ const handleApprovePlan = async (plan, approval) => {
           </div>
           </>
         </div>
-        {/* Forgot Password Modal */}
         <AnimatedOverlay
           open={showForgotModal}
           className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
         >
-            <div className={`max-w-sm w-full rounded-2xl border p-6 ${bgCard}`}>
-              <h3 className="text-base font-bold mb-2">Reset Staff Credentials</h3>
-              <p className={`text-xs mb-4 ${textMuted}`}>
-                Password recovery is not available in the backend yet.
-              </p>
-              <div className="flex justify-end space-x-2">
-                <button
-                  onClick={() => setShowForgotModal(false)}
-                  className={`px-3 py-2 rounded-lg text-xs ${bgSurface}`}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    setShowForgotModal(false);
-                    showToast('Password recovery is not available yet. Contact your organization administrator.');
-                  }}
-                  className="px-4 py-2 rounded-lg bg-[#E50914] text-white text-xs font-semibold"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
+          <StaffPasswordRecovery
+            resetToken={staffResetToken}
+            initialEmail={staffEmail}
+            onClose={closeStaffPasswordRecovery}
+            onResetSuccess={handleStaffPasswordResetSuccess}
+            bgCard={bgCard}
+            bgSurface={bgSurface}
+            textMuted={textMuted}
+          />
         </AnimatedOverlay>
 
         <footer className={`text-center text-[11px] ${textMuted}`}>

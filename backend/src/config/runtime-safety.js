@@ -74,6 +74,13 @@ export const isDevelopmentManualEmailDeliveryEnabled = (env = process.env) =>
   env.ENABLE_DEV_EMAIL_DELIVERY === "true" &&
   isSmtpConfigurationPresent(env);
 
+export const isDevelopmentCustomerVerificationEmailEnabled = (
+  env = process.env
+) =>
+  env.NODE_ENV === "development" &&
+  env.ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL === "true" &&
+  isSmtpConfigurationPresent(env);
+
 export const isDevelopmentReminderSchedulerEnabled = (env = process.env) =>
   env.NODE_ENV === "development" &&
   env.ENABLE_DEV_REMINDER_SCHEDULER === "true" &&
@@ -84,6 +91,7 @@ export const isEmailPurposeEnabled = (
   env = process.env,
   {
     allowDevelopmentManualSend = false,
+    allowDevelopmentCustomerVerification = false,
     allowDevelopmentReminderScheduler = false
   } = {}
 ) =>
@@ -93,6 +101,9 @@ export const isEmailPurposeEnabled = (
     (env.NODE_ENV === "production" && isSmtpConfigurationPresent(env)) ||
     (allowDevelopmentManualSend &&
       isDevelopmentManualEmailDeliveryEnabled(env)) ||
+    (allowDevelopmentCustomerVerification &&
+      purpose === "EMAIL_VERIFICATION" &&
+      isDevelopmentCustomerVerificationEmailEnabled(env)) ||
     (allowDevelopmentReminderScheduler &&
       purpose.startsWith("PAYMENT_REMINDER:") &&
       isDevelopmentReminderSchedulerEnabled(env))

@@ -59,13 +59,13 @@ leaves due reminders pending and does not change their delivery status. Manual
 sending bypasses scheduler polling, not the email runtime gate.
 
 For local development only, set `ENABLE_DEV_EMAIL_DELIVERY=true` in the
-backend's `.env.local` to permit SMTP delivery initiated by the confirmed
-ADMIN/OWNER manual reminder-send route. Valid SMTP configuration is still
-required. The opt-in is passed only through that manual-send path; automatic
-reminder processing remains disabled unless the separate scheduler opt-in is
-enabled, and all other customer email workflows remain disabled outside
-production. Keep the setting unset or `false` by default, and never copy it
-into production configuration.
+backend's `.env.local` to permit user-requested SMTP delivery, including
+staff password reset and the confirmed ADMIN/OWNER manual reminder-send route.
+For registration/resend verification OTP only, use the separate
+`ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL=true` opt-in. Both settings require
+valid SMTP configuration; neither enables automatic reminder processing, which
+requires the separate scheduler opt-in. Keep the settings `false` by default,
+and never copy them into production configuration.
 
 For isolated scheduler testing only, set
 `ENABLE_DEV_REMINDER_SCHEDULER=true` in `.env.local`. This is a separate

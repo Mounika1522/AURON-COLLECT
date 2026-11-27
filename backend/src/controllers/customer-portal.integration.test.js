@@ -144,6 +144,7 @@ test("customer portal registration, verification, isolation, password reset, and
     assert.equal(registration.status, 202);
     const registrationData = await registration.json();
     assert.deepEqual(registrationData, genericRegistrationResponse);
+    assert.doesNotMatch(JSON.stringify(registrationData), /\b\d{6}\b/);
     const portalAccount = await prisma.customerPortalAccount.findUnique({
       where: { customerId: customer.id }
     });

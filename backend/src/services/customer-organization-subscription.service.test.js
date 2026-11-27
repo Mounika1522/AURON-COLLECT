@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import test from "node:test";
 import {
   createCustomerOrganizationBillingOrder,
+  getCustomerOrganizationBillingPayments,
   verifyCustomerOrganizationBillingPayment
 } from "./customer-organization-subscription.service.js";
 
@@ -18,6 +19,30 @@ const signatureFor = (orderId, paymentId) =>
     .createHmac("sha256", testEnv.RAZORPAY_KEY_SECRET)
     .update(`${orderId}|${paymentId}`)
     .digest("hex");
+
+test("customer billing history selects the plan relation and exposes its name", async () => {
+  let query;
+  const result = await getCustomerOrganizationBillingPayments({
+    billingPayment: {
+      findMany: async (args) => {
+        query = args;
+        return [{
+          id: "payment-1",
+          amount: "999.00",
+          plan: { code: "STARTER", name: "Starter" }
+        }];
+      }
+    }
+  }, "customer-organization-1");
+
+  assert.equal(query.where.organisationId, "customer-organization-1");
+  assert.equal(query.select.planName, undefined);
+  assert.deepEqual(query.select.plan, {
+    select: { code: true, name: true }
+  });
+  assert.equal(result[0].planName, "Starter");
+  assert.equal(result[0].amount, 999);
+});
 
 test("customer organization checkout uses only official monthly plan records and Test Mode", async () => {
   let orderRecordArgs;

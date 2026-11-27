@@ -17,6 +17,37 @@ export const CUSTOMER_ORGANIZATION_PLAN_CODES = Object.freeze([
   "BUSINESS"
 ]);
 
+export const getCustomerOrganizationBillingPayments = async (
+  db,
+  organisationId
+) => {
+  const payments = await db.billingPayment.findMany({
+    where: { organisationId },
+    select: {
+      id: true,
+      status: true,
+      billingCycle: true,
+      amount: true,
+      currency: true,
+      effectiveAt: true,
+      periodEndsAt: true,
+      paidAt: true,
+      createdAt: true,
+      razorpayPaymentId: true,
+      plan: { select: { code: true, name: true } },
+      invoice: { select: { id: true, invoiceNumber: true } }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20
+  });
+
+  return payments.map((payment) => ({
+    ...payment,
+    planName: payment.plan.name,
+    amount: Number(payment.amount)
+  }));
+};
+
 const isValidOrderInput = ({ planCode, billingCycle, idempotencyKey }) =>
   CUSTOMER_ORGANIZATION_PLAN_CODES.includes(planCode) &&
   billingCycle === "MONTHLY" &&

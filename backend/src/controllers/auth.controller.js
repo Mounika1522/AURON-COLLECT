@@ -2,6 +2,7 @@
 import prisma from "../config/prisma.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { isStrongStaffPassword } from "../services/staff-password-policy.js";
 
 // Generate JWT Token
 const generateToken = (user) => {
@@ -198,21 +199,6 @@ export const login = async (req, res) => {
   }
 };
 
-const isStrongPassword = (password) => {
-  const characterClasses = [
-    /\p{Ll}/u,
-    /\p{Lu}/u,
-    /\p{N}/u,
-    /[^\p{L}\p{N}\s]/u
-  ];
-
-  return (
-    password.length >= 12 &&
-    Buffer.byteLength(password, "utf8") <= 72 &&
-    characterClasses.filter((characterClass) => characterClass.test(password)).length >= 3
-  );
-};
-
 export const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword, confirmPassword } = req.body || {};
@@ -237,7 +223,7 @@ export const changePassword = async (req, res) => {
       });
     }
 
-    if (!isStrongPassword(newPassword)) {
+    if (!isStrongStaffPassword(newPassword)) {
       return res.status(400).json({
         success: false,
         message: "New password must be at least 12 characters, use at least 3 character types, and fit bcrypt's 72-byte limit."

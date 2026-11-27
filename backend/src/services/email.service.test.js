@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getSmtpTransportOptions } from "./email.service.js";
+import { getSmtpTransportOptions, sendEmail } from "./email.service.js";
 
 const gmailConfig = {
   SMTP_HOST: "smtp.gmail.com",
@@ -36,4 +36,37 @@ test("SMTP options reject missing configuration without inventing credentials", 
     () => getSmtpTransportOptions({ SMTP_HOST: "smtp.gmail.com" }),
     /SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM/
   );
+});
+
+test("development customer verification uses the purpose-specific opt-in", async () => {
+  const message = {
+    purpose: "EMAIL_VERIFICATION",
+    to: "entered@example.test",
+    subject: "Verify",
+    text: "One-time code"
+  };
+  const env = {
+    NODE_ENV: "development",
+    ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL: "true",
+    SMTP_HOST: "smtp.example.test",
+    SMTP_PORT: "587",
+    SMTP_USER: "sender@example.test",
+    SMTP_PASS: "test-password",
+    EMAIL_FROM: "sender@example.test"
+  };
+  let sentMessage;
+  const result = await sendEmail(message, {
+    env,
+    allowDevelopmentCustomerVerification: true,
+    transporterFactory: () => ({
+      sendMail: async (mail) => {
+        sentMessage = mail;
+        return { accepted: [message.to], messageId: "test-message" };
+      }
+    })
+  });
+
+  assert.equal(result.messageId, "test-message");
+  assert.equal(sentMessage.to, message.to);
+  assert.equal(sentMessage.from, env.EMAIL_FROM);
 });

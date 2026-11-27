@@ -53,8 +53,20 @@ model User {
   sessionVersion         Int                     @default(0)
   adminNotificationReads AdminNotificationRead[]
   organisation           Organisation            @relation(fields: [organisationId], references: [id])
+  passwordResetToken     StaffPasswordResetToken?
 
   @@unique([email, organisationId])
+}
+
+model StaffPasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
 }
 
 model Customer {

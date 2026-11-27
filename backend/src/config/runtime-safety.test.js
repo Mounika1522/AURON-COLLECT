@@ -7,6 +7,7 @@ import {
   assertSafeDevelopmentDatabase,
   areBackgroundSchedulersEnabled,
   getMissingSmtpConfiguration,
+  isDevelopmentCustomerVerificationEmailEnabled,
   isDevelopmentReminderSchedulerEnabled,
   isEmailPurposeEnabled,
   isNotificationDeliveryEnabled,
@@ -204,6 +205,36 @@ test("development email opt-in authorizes only explicitly manual sends with SMTP
   assert.equal(isEmailPurposeEnabled("TEST_EMAIL", developmentSmtp, {
     allowDevelopmentManualSend: true
   }), false);
+});
+
+test("development customer verification email opt-in is purpose-limited", () => {
+  const developmentSmtp = {
+    ...productionSmtp,
+    NODE_ENV: "development",
+    ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL: "true"
+  };
+
+  assert.equal(isDevelopmentCustomerVerificationEmailEnabled(developmentSmtp), true);
+  assert.equal(isEmailPurposeEnabled(
+    "EMAIL_VERIFICATION",
+    developmentSmtp,
+    { allowDevelopmentCustomerVerification: true }
+  ), true);
+  assert.equal(isEmailPurposeEnabled(
+    "PASSWORD_RESET",
+    developmentSmtp,
+    { allowDevelopmentCustomerVerification: true }
+  ), false);
+  assert.equal(isEmailPurposeEnabled(
+    "EMAIL_VERIFICATION",
+    { ...developmentSmtp, SMTP_PASS: "" },
+    { allowDevelopmentCustomerVerification: true }
+  ), false);
+  assert.equal(isEmailPurposeEnabled(
+    "EMAIL_VERIFICATION",
+    { ...developmentSmtp, ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL: "false" },
+    { allowDevelopmentCustomerVerification: true }
+  ), false);
 });
 
 test("test email purpose is never enabled by application runtime", () => {

@@ -115,6 +115,133 @@ const reminderEmail = {
   text: "Payment reference INV-001"
 };
 
+test("development registration OTP uses its purpose-specific email opt-in", async () => {
+  const { db, attempts } = makeCustomerAttemptStore();
+  const developmentSmtp = {
+    ...productionSmtp,
+    NODE_ENV: "development",
+    ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL: "true"
+  };
+  const message = {
+    accountId: "account-otp",
+    customerId: "customer-otp",
+    purpose: "EMAIL_VERIFICATION",
+    to: "customer-entered@example.test",
+    subject: "Verify your email",
+    text: "Verification code: 012345"
+  };
+  let delivered;
+  const result = await sendTrackedCustomerEmail(message, {
+    db,
+    env: developmentSmtp,
+    allowDevelopmentCustomerVerification: true,
+    deliver: async (email, options) => {
+      delivered = { email, options };
+      return { accepted: [email.to], messageId: "otp-message-1" };
+    }
+  });
+
+  assert.equal(result.status, "SMTP_ACCEPTED");
+  assert.equal(delivered.email.to, "customer-entered@example.test");
+  assert.equal(delivered.email.text.includes("012345"), true);
+  assert.equal(delivered.options.allowDevelopmentCustomerVerification, true);
+  assert.equal(attempts[0].status, "SMTP_ACCEPTED");
+  assert.equal(attempts[0].recipient, "customer-entered@example.test");
+  assert.equal(JSON.stringify(result).includes("012345"), false);
+});
+
+test("development registration OTP stays disabled without the explicit opt-in", async () => {
+  const { db, attempts } = makeCustomerAttemptStore();
+  let sendCount = 0;
+  const result = await sendTrackedCustomerEmail({
+    accountId: "account-otp",
+    customerId: "customer-otp",
+    purpose: "EMAIL_VERIFICATION",
+    to: "customer-entered@example.test",
+    subject: "Verify your email",
+    text: "Verification code: 012345"
+  }, {
+    db,
+    env: { ...productionSmtp, NODE_ENV: "development" },
+    deliver: async () => {
+      sendCount += 1;
+      return { accepted: ["customer-entered@example.test"] };
+    }
+  });
+
+  assert.equal(result.status, "DISABLED");
+  assert.equal(result.errorCode, "NOTIFICATION_DELIVERY_DISABLED");
+  assert.equal(sendCount, 0);
+  assert.equal(attempts[0].status, "DISABLED");
+  assert.equal(attempts[0].errorCode, "NOTIFICATION_DELIVERY_DISABLED");
+});
+
+test("OTP SMTP failures are tracked without logging recipient or code", async () => {
+  const { db, attempts } = makeCustomerAttemptStore();
+  const logs = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => logs.push(args);
+  let result;
+  try {
+    result = await sendTrackedCustomerEmail({
+      accountId: "account-otp",
+      customerId: "customer-otp",
+      purpose: "EMAIL_VERIFICATION",
+      to: "customer-entered@example.test",
+      subject: "Verify your email",
+      text: "Verification code: 012345"
+    }, {
+      db,
+      env: productionSmtp,
+      deliver: async () => {
+        const error = new Error("535 SMTP authentication failed");
+        error.code = "EAUTH";
+        throw error;
+      }
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(result.status, "FAILED");
+  assert.equal(result.errorCode, "EAUTH");
+  assert.equal(attempts[0].status, "FAILED");
+  assert.equal(attempts[0].errorCode, "EAUTH");
+  assert.equal(attempts[0].errorMessage, "SMTP submission failed");
+  const logText = JSON.stringify(logs);
+  assert.equal(logText.includes("customer-entered@example.test"), false);
+  assert.equal(logText.includes("012345"), false);
+  assert.equal(logText.includes("535 SMTP authentication failed"), false);
+});
+
+test("customer verification opt-in does not enable development password-reset email", async () => {
+  const { db, attempts } = makeCustomerAttemptStore();
+  let sendCount = 0;
+  const result = await sendTrackedCustomerEmail({
+    accountId: "account-otp",
+    customerId: "customer-otp",
+    purpose: "PASSWORD_RESET",
+    to: "customer-entered@example.test",
+    subject: "Reset password",
+    text: "Reset link"
+  }, {
+    db,
+    env: {
+      ...productionSmtp,
+      NODE_ENV: "development",
+      ENABLE_DEV_CUSTOMER_VERIFICATION_EMAIL: "true"
+    },
+    deliver: async () => {
+      sendCount += 1;
+      return { accepted: ["customer-entered@example.test"] };
+    }
+  });
+
+  assert.equal(result.status, "DISABLED");
+  assert.equal(sendCount, 0);
+  assert.equal(attempts[0].errorCode, "NOTIFICATION_DELIVERY_DISABLED");
+});
+
 test("reminder delivery stores one idempotent attempt and never resends an accepted email", async () => {
   const { db, attempts } = makeAttemptStore();
   let sendCount = 0;

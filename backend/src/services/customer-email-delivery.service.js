@@ -61,7 +61,8 @@ export const sendTrackedCustomerEmail = async ({
   db = prisma,
   deliver = sendEmail,
   env = process.env,
-  now = () => new Date()
+  now = () => new Date(),
+  allowDevelopmentCustomerVerification = false
 } = {}) => {
   let attempt;
 if (billingPaymentId) {
@@ -160,7 +161,9 @@ if (billingPaymentId) {
   }
 
   try {
-    assertEmailDeliveryEnabled(purpose, env);
+    assertEmailDeliveryEnabled(purpose, env, {
+      allowDevelopmentCustomerVerification
+    });
     const result = await deliver({
       purpose,
       to,
@@ -168,7 +171,7 @@ if (billingPaymentId) {
       text,
       html,
       attachments
-    });
+    }, { allowDevelopmentCustomerVerification, env });
     const acceptedRecipients = (result.accepted || []).map((recipient) =>
       String(typeof recipient === "string" ? recipient : recipient?.address || "")
         .toLowerCase()

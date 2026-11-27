@@ -55,6 +55,7 @@ export const sendEmail = async (
   { purpose, to, subject, text, html, attachments },
   {
     manualSend = false,
+    allowDevelopmentCustomerVerification = false,
     schedulerSend = false,
     env = process.env,
     transporterFactory = createTransporter
@@ -62,6 +63,7 @@ export const sendEmail = async (
 ) => {
   assertEmailDeliveryEnabled(purpose, env, {
     allowDevelopmentManualSend: manualSend,
+    allowDevelopmentCustomerVerification,
     allowDevelopmentReminderScheduler: schedulerSend
   });
   return deliverEmail(

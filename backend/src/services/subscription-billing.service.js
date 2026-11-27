@@ -277,8 +277,17 @@ export const createBillingOrderRecord = async (
       ) {
         return { existing: pending };
       }
-      const error = new Error("A billing order is already pending");
+      const pendingPlan = pending.plan?.name || pending.plan?.code || "another plan";
+      const requestedPlan = plan.name || plan.code;
+      const error = new Error(
+        `A ${pendingPlan} ${pending.billingCycle.toLowerCase()} checkout is still pending. ` +
+        `Resolve it before starting a ${requestedPlan} ${billingCycle.toLowerCase()} checkout.`
+      );
       error.code = "BILLING_ORDER_PENDING";
+      error.details = {
+        pendingPlanCode: pending.plan?.code || null,
+        requestedPlanCode: plan.code
+      };
       throw error;
     }
 

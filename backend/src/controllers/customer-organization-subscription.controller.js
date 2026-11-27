@@ -10,6 +10,7 @@ import {
 } from "../services/razorpay.service.js";
 import {
   createCustomerOrganizationBillingOrder,
+  getCustomerOrganizationBillingPayments,
   verifyCustomerOrganizationBillingPayment
 } from "../services/customer-organization-subscription.service.js";
 import {
@@ -79,26 +80,7 @@ export const getCustomerOrganizationSubscription = async (req, res) => {
         include: { plan: { select: { code: true, name: true } } },
         orderBy: { startsAt: "asc" }
       }),
-      prisma.billingPayment.findMany({
-        where: { organisationId },
-        select: {
-          id: true,
-          status: true,
-          planName: true,
-          billingCycle: true,
-          amount: true,
-          currency: true,
-          effectiveAt: true,
-          periodEndsAt: true,
-          paidAt: true,
-          createdAt: true,
-          razorpayPaymentId: true,
-          plan: { select: { code: true, name: true } },
-          invoice: { select: { id: true, invoiceNumber: true } }
-        },
-        orderBy: { createdAt: "desc" },
-        take: 20
-      })
+      getCustomerOrganizationBillingPayments(prisma, organisationId)
     ]);
 
     return res.status(200).json({
@@ -107,10 +89,7 @@ export const getCustomerOrganizationSubscription = async (req, res) => {
       billingConfiguration: testBillingConfiguration(),
       currentSubscription: publicSubscription(currentSubscription),
       scheduledSubscription: publicSubscription(scheduled),
-      payments: payments.map((payment) => ({
-        ...payment,
-        amount: Number(payment.amount)
-      }))
+      payments
     });
   } catch (error) {
     console.error("Customer organization subscription query failed:", error.code || error.name);
@@ -121,7 +100,11 @@ export const getCustomerOrganizationSubscription = async (req, res) => {
   }
 };
 
-export const createCustomerOrganizationSubscriptionOrder = async (req, res) => {
+export const createCustomerOrganizationSubscriptionOrder = async (
+  req,
+  res,
+  createBillingOrder = createCustomerOrganizationBillingOrder
+) => {
   const planCode =
     typeof req.body?.planCode === "string"
       ? req.body.planCode.trim().toUpperCase()
@@ -133,7 +116,7 @@ export const createCustomerOrganizationSubscriptionOrder = async (req, res) => {
   const idempotencyKey = req.get("Idempotency-Key");
 
   try {
-    const result = await createCustomerOrganizationBillingOrder({
+    const result = await createBillingOrder({
       organisationId: req.customer.organisationId,
       customerId: req.customer.customerId,
       planCode,
@@ -174,9 +157,11 @@ export const createCustomerOrganizationSubscriptionOrder = async (req, res) => {
     if (status) {
       return res.status(status).json({
         success: false,
+        code: error.code,
         message: error.code === "BILLING_ORDER_PENDING"
           ? error.message
-          : "The requested subscription checkout could not be created."
+          : "The requested subscription checkout could not be created.",
+        ...(error.details ? { details: error.details } : {})
       });
     }
     console.error("Customer organization subscription order failed:", error.code || error.name);

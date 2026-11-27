@@ -70,17 +70,21 @@ const sendPortalEmail = async (account, purpose, credential) => {
     purpose,
     to: account.email,
     ...message
+  }, {
+    allowDevelopmentCustomerVerification: verification
   });
 };
 
 const registrationEligibilityMessage =
-  "We can't confirm registration eligibility in this response. If your details match an active customer record and are eligible for portal registration, a verification code may be sent. Contact your organization's administrator if you need assistance.";
+  "We can't confirm registration eligibility in this response. If your details match an active customer record, a verification code may be sent, but email delivery is not confirmed. If it doesn't arrive, wait 60 seconds before requesting another code or contact your organization's administrator.";
 
 const respondWithRegistrationEligibility = (res) =>
   res.status(202).json({ message: registrationEligibilityMessage });
 
 const recoveryResponseMessage = (purpose) => {
-  if (!isEmailPurposeEnabled(purpose)) {
+  if (!isEmailPurposeEnabled(purpose, process.env, {
+    allowDevelopmentCustomerVerification: purpose === "EMAIL_VERIFICATION"
+  })) {
     return "If an eligible account exists, we processed the request. Outbound email is disabled in this environment, so no message was sent.";
   }
   return purpose === "EMAIL_VERIFICATION"

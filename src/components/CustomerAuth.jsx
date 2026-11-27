@@ -312,7 +312,7 @@ export default function CustomerAuth({
       {mode === "verify" && (
         <form className="space-y-4" onSubmit={submitVerification}>
           <p className={`text-xs ${textMuted}`}>
-            Enter the six-digit code sent to {email}.
+            If you received a six-digit code at {email}, enter it here. If it does not arrive, check your spam folder and request another code after the 60-second resend cooldown.
           </p>
           <label className="block text-xs font-semibold">
             Email verification code
