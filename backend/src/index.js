@@ -36,6 +36,7 @@ import { handleCustomerSubscriptionWebhook } from "./controllers/customer-subscr
 import { startCustomerSubscriptionScheduler } from "./services/customer-subscription.scheduler.js";
 
 const app = express();
+app.set('trust proxy', 1);
 
 // ==============================
 // SECURITY MIDDLEWARE
