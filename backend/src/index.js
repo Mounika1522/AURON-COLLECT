@@ -260,8 +260,12 @@ app.use((error, req, res, next) => {
 // ==============================
 
 const PORT = process.env.PORT || 5000;
+const isProductionEnv =
+  process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 
-assertSafeDevelopmentDatabase();
+if (!isProductionEnv) {
+  assertSafeDevelopmentDatabase();
+}
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
