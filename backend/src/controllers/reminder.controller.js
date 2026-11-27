@@ -5,6 +5,8 @@ import {
   buildReminderDataWhere,
 } from "../services/dashboard-access.service.js";
 import { validateReminderScheduleTime } from "../services/reminder-time.service.js";
+import { buildReminderEmailPreview } from "../services/customer-portal-notification.service.js";
+import { processReminder } from "../services/reminder.scheduler.js";
 
 const allowedChannels = ["EMAIL"];
 const allowedStatuses = ["PENDING", "SENT", "FAILED", "CANCELLED"];
@@ -424,6 +426,255 @@ export const updateReminderStatus = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to update reminder status"
+    });
+  }
+};
+
+export const deleteReminder = async (req, res) => {
+  if (!["ADMIN", "OWNER"].includes(String(req.user?.role || "").toUpperCase())) {
+    return res.status(403).json({
+      success: false,
+      message: "Only organization admins and owners can delete reminders"
+    });
+  }
+
+  const organisationId = req.user.organisationId;
+  const reminderId = req.params.id;
+  const deletableStatuses = ["PENDING", "CANCELLED", "FAILED"];
+
+  try {
+    const result = await prisma.reminder.deleteMany({
+      where: {
+        id: reminderId,
+        organisationId,
+        channel: "EMAIL",
+        status: { in: deletableStatuses },
+        deliveryStatus: { not: "SMTP_ACCEPTED" }
+      }
+    });
+
+    if (result.count === 1) {
+      return res.json({
+        success: true,
+        message: "Reminder deleted successfully"
+      });
+    }
+
+    const reminder = await prisma.reminder.findFirst({
+      where: {
+        id: reminderId,
+        organisationId,
+        channel: "EMAIL"
+      },
+      select: { id: true, status: true, deliveryStatus: true }
+    });
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: "Reminder not found"
+      });
+    }
+
+    if (reminder.status === "PROCESSING") {
+      return res.status(409).json({
+        success: false,
+        message: "This reminder is being processed and cannot be deleted right now"
+      });
+    }
+
+    if (
+      reminder.status === "SENT" ||
+      reminder.status === "SMTP_ACCEPTED" ||
+      reminder.deliveryStatus === "SMTP_ACCEPTED"
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Sent reminders are retained permanently for audit history"
+      });
+    }
+
+    return res.status(409).json({
+      success: false,
+      message: "This reminder can no longer be deleted. Refresh the history and try again"
+    });
+  } catch (error) {
+    console.error("Delete reminder error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete reminder"
+    });
+  }
+};
+
+const isReminderAdmin = (req) =>
+  ["ADMIN", "OWNER"].includes(String(req.user?.role || "").toUpperCase());
+
+const findReminderForManualSend = (db, req) =>
+  db.reminder.findFirst({
+    where: {
+      id: req.params.id,
+      organisationId: req.user.organisationId,
+      channel: "EMAIL"
+    },
+    include: {
+      customer: true,
+      invoice: true,
+      template: true,
+      emailDeliveryAttempt: {
+        select: {
+          status: true,
+          errorCode: true,
+          acceptedAt: true,
+          providerMessageId: true
+        }
+      }
+    }
+  });
+
+const hasAcceptedReminderEmail = (reminder) =>
+  reminder.status === "SENT" ||
+  reminder.deliveryStatus === "SMTP_ACCEPTED" ||
+  Boolean(reminder.sentAt) ||
+  reminder.emailDeliveryAttempt?.status === "SMTP_ACCEPTED" ||
+  Boolean(reminder.emailDeliveryAttempt?.acceptedAt) ||
+  Boolean(reminder.emailDeliveryAttempt?.providerMessageId);
+
+const isManualSendEligible = (reminder) => {
+  if (
+    hasAcceptedReminderEmail(reminder) ||
+    reminder.status === "CANCELLED" ||
+    reminder.status === "PROCESSING" ||
+    reminder.deliveryStatus === "PROCESSING"
+  ) {
+    return false;
+  }
+
+  if (reminder.status === "PENDING") return true;
+
+  return reminder.status === "FAILED" &&
+    reminder.deliveryStatus === "DISABLED" &&
+    reminder.lastError === "DELIVERY_DISABLED" &&
+    reminder.emailDeliveryAttempt?.status === "DISABLED" &&
+    reminder.emailDeliveryAttempt?.errorCode === "DELIVERY_DISABLED";
+};
+
+export const previewReminderEmail = async (
+  req,
+  res,
+  { db = prisma, buildPreview = buildReminderEmailPreview } = {}
+) => {
+  if (!isReminderAdmin(req)) {
+    return res.status(403).json({
+      success: false,
+      message: "Only organization admins and owners can send reminders"
+    });
+  }
+
+  try {
+    const reminder = await findReminderForManualSend(db, req);
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: "Reminder not found"
+      });
+    }
+    if (!isManualSendEligible(reminder)) {
+      return res.status(409).json({
+        success: false,
+        message: "This reminder is not eligible for manual email delivery"
+      });
+    }
+
+    const preview = await buildPreview(reminder, { db });
+    if (preview.status !== "READY") {
+      return res.status(409).json({
+        success: false,
+        message: preview.errorMessage || "This reminder is not eligible to send",
+        errorCode: preview.errorCode
+      });
+    }
+
+    return res.json({
+      success: true,
+      preview: {
+        recipient: preview.recipient,
+        subject: preview.subject,
+        message: preview.message
+      }
+    });
+  } catch (error) {
+    console.error("Preview reminder email error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to prepare reminder email preview"
+    });
+  }
+};
+
+export const sendReminderNow = async (
+  req,
+  res,
+  { db = prisma, process = processReminder } = {}
+) => {
+  if (!isReminderAdmin(req)) {
+    return res.status(403).json({
+      success: false,
+      message: "Only organization admins and owners can send reminders"
+    });
+  }
+
+  try {
+    const reminder = await findReminderForManualSend(db, req);
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: "Reminder not found"
+      });
+    }
+    if (!isManualSendEligible(reminder)) {
+      return res.status(409).json({
+        success: false,
+        message: "This reminder is not eligible for manual email delivery"
+      });
+    }
+
+    const result = await process(reminder, { db, manualSend: true });
+    const updatedReminder = await findReminderForManualSend(db, req);
+
+    if (result.status === "SENT") {
+      return res.json({
+        success: true,
+        message: "Reminder email sent successfully.",
+        reminder: updatedReminder
+      });
+    }
+
+    if (result.status === "NOT_CLAIMED") {
+      return res.status(409).json({
+        success: false,
+        message: "This reminder is already being processed or is no longer pending"
+      });
+    }
+
+    const message = result.errorMessage ||
+      (result.status === "CANCELLED"
+        ? "The invoice is no longer eligible for a reminder."
+        : "Reminder email could not be sent.");
+    return res.status(result.status === "CANCELLED" ? 409 : 502).json({
+      success: false,
+      message,
+      status: result.status,
+      deliveryStatus: result.deliveryStatus,
+      errorCode: result.errorCode,
+      retryable: result.deliveryStatus === "RETRY_SCHEDULED",
+      reminder: updatedReminder
+    });
+  } catch (error) {
+    console.error("Send reminder email now error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send reminder email"
     });
   }
 };

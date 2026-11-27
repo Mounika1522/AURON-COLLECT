@@ -1,56 +1,124 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse } from "dotenv";
+
 const PROTECTED_DEVELOPMENT_DATABASE = "auron_collect_app";
-const AUTH_EMAIL_PURPOSES = new Set([
-  "EMAIL_VERIFICATION",
-  "PASSWORD_RESET"
-]);
-export const TEST_EMAIL_PURPOSE = "TEST_EMAIL";
-const TEST_EMAIL_RECIPIENTS = new Set([
-  "mounikakodige@gmail.com",
-  "gogulakusuma@gmail.com"
-]);
+const DEVELOPMENT_DATABASE_HOST = "localhost";
+const DEVELOPMENT_DATABASE_PORT = "5432";
+const DEVELOPMENT_DATABASE_NAME = "auron_collect_app_dev";
+const SMTP_REQUIRED_ENV_VARIABLES = [
+  "SMTP_HOST",
+  "SMTP_PORT",
+  "SMTP_USER",
+  "SMTP_PASS",
+  "EMAIL_FROM"
+];
+const BACKEND_ENV_FILE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../.env"
+);
+
+export const mergeMissingSmtpVariables = (env, source) => {
+  const loaded = [];
+  for (const key of SMTP_REQUIRED_ENV_VARIABLES) {
+    if (
+      (typeof env[key] !== "string" || !env[key].trim()) &&
+      typeof source[key] === "string" &&
+      source[key].trim()
+    ) {
+      env[key] = source[key].trim();
+      loaded.push(key);
+    }
+  }
+  return loaded;
+};
+
+export const loadDevelopmentSmtpVariables = (env = process.env) => {
+  if (env.NODE_ENV === "production") return [];
+
+  let contents;
+  try {
+    contents = readFileSync(BACKEND_ENV_FILE, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  return mergeMissingSmtpVariables(env, parse(contents));
+};
+
+export const getMissingSmtpConfiguration = (env = process.env) => {
+  const missing = SMTP_REQUIRED_ENV_VARIABLES.filter(
+    (key) => typeof env[key] !== "string" || !env[key].trim()
+  );
+  const port = Number(env.SMTP_PORT);
+  if (
+    env.SMTP_PORT &&
+    (!Number.isInteger(port) || port < 1 || port > 65535) &&
+    !missing.includes("SMTP_PORT")
+  ) {
+    missing.push("SMTP_PORT");
+  }
+  return missing;
+};
+
+export const isSmtpConfigurationPresent = (env = process.env) =>
+  getMissingSmtpConfiguration(env).length === 0;
 
 export const isNotificationDeliveryEnabled = (env = process.env) =>
   env.NOTIFICATION_DELIVERY_MODE === "live";
 
-export const isAllowedTestEmailRecipient = (recipient) =>
-  typeof recipient === "string" && TEST_EMAIL_RECIPIENTS.has(recipient);
+export const isDevelopmentManualEmailDeliveryEnabled = (env = process.env) =>
+  env.NODE_ENV === "development" &&
+  env.ENABLE_DEV_EMAIL_DELIVERY === "true" &&
+  isSmtpConfigurationPresent(env);
+
+export const isDevelopmentReminderSchedulerEnabled = (env = process.env) =>
+  env.NODE_ENV === "development" &&
+  env.ENABLE_DEV_REMINDER_SCHEDULER === "true" &&
+  isSmtpConfigurationPresent(env);
 
 export const isEmailPurposeEnabled = (
   purpose,
   env = process.env,
-  recipient
-) => {
-  if (purpose === TEST_EMAIL_PURPOSE) {
-    return (
-      env.NODE_ENV !== "production" &&
-      isAllowedTestEmailRecipient(recipient)
-    );
-  }
-
-  return (
-    isNotificationDeliveryEnabled(env) ||
-    (
-      env.AUTH_EMAIL_DELIVERY_ENABLED === "true" &&
-      AUTH_EMAIL_PURPOSES.has(purpose)
-    )
+  {
+    allowDevelopmentManualSend = false,
+    allowDevelopmentReminderScheduler = false
+  } = {}
+) =>
+  Boolean(purpose) &&
+  purpose !== "TEST_EMAIL" &&
+  (
+    (env.NODE_ENV === "production" && isSmtpConfigurationPresent(env)) ||
+    (allowDevelopmentManualSend &&
+      isDevelopmentManualEmailDeliveryEnabled(env)) ||
+    (allowDevelopmentReminderScheduler &&
+      purpose.startsWith("PAYMENT_REMINDER:") &&
+      isDevelopmentReminderSchedulerEnabled(env))
   );
-};
 
 export const assertEmailDeliveryEnabled = (
   purpose,
   env = process.env,
-  recipient
+  options = {}
 ) => {
-  if (!isEmailPurposeEnabled(purpose, env, recipient)) {
+  if (!isEmailPurposeEnabled(purpose, env, options)) {
     const error = new Error("Email delivery is disabled for this purpose.");
     error.code = "NOTIFICATION_DELIVERY_DISABLED";
     throw error;
   }
 };
 
+export const areBackgroundSchedulersEnabled = (env = process.env) =>
+  env.DISABLE_BACKGROUND_SCHEDULERS !== "true";
+
 export const isReminderSchedulerEnabled = (env = process.env) =>
-  env.REMINDER_SCHEDULER_ENABLED === "true" &&
-  isNotificationDeliveryEnabled(env);
+  (
+    env.NODE_ENV === "production" &&
+    isSmtpConfigurationPresent(env) &&
+    areBackgroundSchedulersEnabled(env)
+  ) || isDevelopmentReminderSchedulerEnabled(env);
 
 export const assertNotificationDeliveryEnabled = (env = process.env) => {
   if (!isNotificationDeliveryEnabled(env)) {
@@ -93,6 +161,19 @@ export const assertSafeDevelopmentDatabase = (env = process.env) => {
   if (databaseName.toLowerCase() === PROTECTED_DEVELOPMENT_DATABASE) {
     throw new Error(
       "Development startup blocked: DATABASE_URL targets the preserved auron_collect_app database. Use a separate database such as auron_collect_app_dev."
+    );
+  }
+
+  if (
+    env.NODE_ENV === "development" &&
+    (
+      databaseUrl.hostname.toLowerCase() !== DEVELOPMENT_DATABASE_HOST ||
+      databaseUrl.port !== DEVELOPMENT_DATABASE_PORT ||
+      databaseName !== DEVELOPMENT_DATABASE_NAME
+    )
+  ) {
+    throw new Error(
+      "Development startup requires DATABASE_URL to target localhost:5432/auron_collect_app_dev."
     );
   }
 };

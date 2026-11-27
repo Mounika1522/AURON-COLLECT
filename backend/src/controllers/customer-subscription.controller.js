@@ -14,10 +14,15 @@ import {
   isCustomerPlanEligibleForType,
   isCustomerPlanPurchasableForCycle,
   recordCapturedCustomerPayment,
-  verifyCustomerPaymentSignature,
+  verifyCustomerSubscriptionPayment,
   verifyCustomerWebhookSignature
 } from "../services/customer-subscription.service.js";
 import { settleDueCustomerSubscriptions } from "../services/customer-subscription.scheduler.js";
+import {
+  finalizeCustomerSubscriptionReceipt,
+  isStoredReceiptPdfValid,
+  sendCustomerSubscriptionReceiptEmail
+} from "../services/customer-subscription-receipt.service.js";
 
 const logoPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../public/auron-logo.png");
 const companyFooter = () => [
@@ -226,6 +231,23 @@ const sendBillingPdf = async (res, filename, data) => {
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Cache-Control", "private, no-store");
   return res.status(200).send(pdf);
+};
+
+const finalizeCapturedReceipt = async (paymentId, req) => {
+  const origin =
+    process.env.PUBLIC_API_URL || `${req.protocol}://${req.get("host")}`;
+  const receipt = await finalizeCustomerSubscriptionReceipt(paymentId, origin);
+  if (!isStoredReceiptPdfValid(receipt)) {
+    throw new Error("Verified payment receipt could not be finalized.");
+  }
+
+  try {
+    const delivery = await sendCustomerSubscriptionReceiptEmail(receipt.id);
+    return { receipt, emailStatus: delivery.status };
+  } catch (error) {
+    console.error("Payment receipt email tracking failed:", error.code || error.name);
+    return { receipt, emailStatus: "FAILED" };
+  }
 };
 
 const toErrorCode = (error) =>
@@ -555,7 +577,7 @@ export const verifyCustomerSubscriptionCheckout = async (req, res) => {
     const payment = await prisma.customerSubscriptionPayment.findFirst({
       where: { ...scopeFor(req.customer), razorpayOrderId: orderId }
     });
-    if (!payment || !verifyCustomerPaymentSignature(orderId, paymentId, signature)) {
+    if (!payment) {
       return res.status(400).json({
         success: false,
         message: "Payment verification failed."
@@ -563,12 +585,22 @@ export const verifyCustomerSubscriptionCheckout = async (req, res) => {
     }
 
     const razorpay = createCustomerRazorpayClient();
-    const providerPayment = await razorpay.payments.fetch(paymentId);
-    if (
-      providerPayment.id !== paymentId ||
-      providerPayment.order_id !== orderId ||
-      providerPayment.status !== "captured"
-    ) {
+    const result = await verifyCustomerSubscriptionPayment({
+      payment,
+      orderId,
+      paymentId,
+      signature,
+      secret: process.env.CUSTOMER_RAZORPAY_KEY_SECRET,
+      fetchProviderPayment: (id) => razorpay.payments.fetch(id),
+      runTransaction: (callback) => prisma.$transaction(callback)
+    });
+    if (result.status === "INVALID_SIGNATURE") {
+      return res.status(400).json({
+        success: false,
+        message: "Payment verification failed."
+      });
+    }
+    if (result.status === "PENDING") {
       return res.status(202).json({
         success: true,
         status: "PENDING",
@@ -576,18 +608,38 @@ export const verifyCustomerSubscriptionCheckout = async (req, res) => {
       });
     }
 
-    const result = await prisma.$transaction((tx) =>
-      recordCapturedCustomerPayment(tx, payment, providerPayment)
-    );
     if (result.status === "PAYMENT_MISMATCH") {
       return res.status(409).json({
         success: false,
         message: "The confirmed payment does not match the subscription order."
       });
     }
+    if (result.status === "PAYMENT_NOT_PAYABLE") {
+      return res.status(409).json({
+        success: false,
+        message: "This payment is no longer eligible for receipt issuance."
+      });
+    }
+    let receiptDelivery;
+    try {
+      receiptDelivery = await finalizeCapturedReceipt(payment.id, req);
+    } catch (error) {
+      console.error("Verified receipt generation failed:", error.code || error.name);
+      return res.status(503).json({
+        success: true,
+        status: "PAID",
+        receiptStatus: "PENDING",
+        message: "Payment is verified. Do not retry checkout; the receipt is being prepared."
+      });
+    }
     return res.status(200).json({
       success: true,
-      status: result.status === "ALREADY_PAID" ? "PAID" : result.status
+      status: result.status === "ALREADY_PAID" ? "PAID" : result.status,
+      receipt: {
+        id: receiptDelivery.receipt.id,
+        receiptNumber: receiptDelivery.receipt.receiptNumber
+      },
+      receiptEmailStatus: receiptDelivery.emailStatus
     });
   } catch (error) {
     if (error.code === "CUSTOMER_SUBSCRIPTION_TEST_UNAVAILABLE") {
@@ -638,7 +690,23 @@ export const handleCustomerSubscriptionWebhook = async (req, res) => {
         }
       });
     } catch (error) {
-      if (error.code === "P2002") return res.status(200).json({ success: true, duplicate: true });
+      if (error.code === "P2002") {
+        const existingEvent = await prisma.customerSubscriptionWebhookEvent.findUnique({
+          where: { providerEventId },
+          select: { id: true, paymentId: true, status: true }
+        });
+        if (
+          existingEvent?.status === "RECEIPT_PENDING" &&
+          existingEvent.paymentId
+        ) {
+          await finalizeCapturedReceipt(existingEvent.paymentId, req);
+          await prisma.customerSubscriptionWebhookEvent.update({
+            where: { id: existingEvent.id },
+            data: { status: "PROCESSED", processedAt: new Date() }
+          });
+        }
+        return res.status(200).json({ success: true, duplicate: true });
+      }
       throw error;
     }
 
@@ -698,16 +766,30 @@ export const handleCustomerSubscriptionWebhook = async (req, res) => {
           organisationId: payment.organisationId,
           customerId: payment.customerId,
           paymentId: payment.id,
-          status: recorded.status === "PAYMENT_MISMATCH" ? "FAILED" : "PROCESSED",
-          processedAt: new Date(),
-          errorCode: recorded.status === "PAYMENT_MISMATCH" ? "PAYMENT_MISMATCH" : null
+          status: ["PAYMENT_MISMATCH", "PAYMENT_NOT_PAYABLE"].includes(recorded.status)
+            ? "FAILED"
+            : "RECEIPT_PENDING",
+          processedAt: null,
+          errorCode: recorded.status === "PAYMENT_MISMATCH"
+            ? "PAYMENT_MISMATCH"
+            : recorded.status === "PAYMENT_NOT_PAYABLE"
+              ? "PAYMENT_NOT_PAYABLE"
+              : null
         }
       });
       return recorded;
     });
+    if (["PAYMENT_MISMATCH", "PAYMENT_NOT_PAYABLE"].includes(result.status)) {
+      return res.status(200).json({ success: true, processed: false });
+    }
+    await finalizeCapturedReceipt(payment.id, req);
+    await prisma.customerSubscriptionWebhookEvent.update({
+      where: { id: event.id },
+      data: { status: "PROCESSED", processedAt: new Date() }
+    });
     return res.status(200).json({
       success: true,
-      processed: result.status !== "PAYMENT_MISMATCH"
+      processed: true
     });
   } catch (error) {
     if (error.code === "CUSTOMER_SUBSCRIPTION_TEST_UNAVAILABLE") {
@@ -768,10 +850,21 @@ export const getCustomerSubscriptionBilling = async (req, res) => {
         take: 100
       }),
       prisma.customerSubscriptionReceipt.findMany({
-        where,
-        include: { payment: true },
-        orderBy: { createdAt: "desc" },
-        take: 100
+        where: {
+          ...where,
+          payment: { status: "PAID" }
+        },
+        select: {
+          id: true,
+          receiptNumber: true,
+          amount: true,
+          currency: true,
+          paidAt: true,
+          payment: {
+            select: { paymentMethod: true, razorpayPaymentId: true }
+          }
+        },
+        orderBy: { createdAt: "desc" }
       })
     ]);
     return res.status(200).json({
@@ -846,29 +939,40 @@ export const getCustomerSubscriptionInvoicePdf = async (req, res) => {
 export const getCustomerSubscriptionReceiptPdf = async (req, res) => {
   try {
     const receipt = await prisma.customerSubscriptionReceipt.findFirst({
-      where: { id: req.params.receiptId, ...scopeFor(req.customer) },
-      include: {
-        payment: true,
-        customer: {
-          select: {
-            name: true,
-            email: true,
-            phone: true,
-            billingAddress: true,
-            taxRegistration: true
-          }
-        }
+      where: {
+        id: req.params.receiptId,
+        ...scopeFor(req.customer),
+        payment: { status: "PAID" }
+      },
+      select: {
+        id: true,
+        paymentId: true,
+        receiptNumber: true,
+        pdfBytes: true,
+        pdfSha256: true,
+        verificationTokenHash: true,
+        payment: { select: { status: true } }
       }
     });
     if (!receipt) {
       return res.status(404).json({ success: false, message: "Receipt not found." });
     }
-    return await sendBillingPdf(res, `${receipt.receiptNumber}.pdf`, {
-      title: "Payment receipt",
-      reference: receipt.receiptNumber,
-      customer: receipt.customer,
-      payment: receipt.payment
-    });
+    const finalized = isStoredReceiptPdfValid(receipt)
+      ? receipt
+      : await finalizeCustomerSubscriptionReceipt(
+          receipt.paymentId,
+          process.env.PUBLIC_API_URL || `${req.protocol}://${req.get("host")}`
+        );
+    if (
+      !isStoredReceiptPdfValid(finalized) ||
+      finalized.payment.status !== "PAID"
+    ) {
+      return res.status(404).json({ success: false, message: "Verified receipt PDF is not available." });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${receipt.receiptNumber}.pdf"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.status(200).send(Buffer.from(finalized.pdfBytes));
   } catch (error) {
     console.error("Customer subscription receipt download failed:", error.code || error.name);
     return res.status(500).json({

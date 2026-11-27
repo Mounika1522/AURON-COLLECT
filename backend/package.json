@@ -7,16 +7,15 @@
   "scripts": {
     "postinstall": "prisma generate",
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
+    "dev": "nodemon --exec \"node --env-file=.env.local\" src/index.js",
+    "test": "node --env-file=.env.local --test",
     "test:dashboard": "node --test src/services/dashboard-metrics.service.test.js src/services/dashboard-filters.service.test.js src/services/dashboard-access.service.test.js src/services/admin-notification.service.test.js src/middleware/dashboard-access.middleware.test.js",
     "test:auth": "node --test src/controllers/auth.integration.test.js",
+    "test:receipts": "node --env-file=.env.local --test src/services/customer-subscription.service.test.js src/services/customer-subscription-receipt.service.test.js src/controllers/customer-subscription-receipt.integration.test.js",
     "test:safety": "node --test src/config/runtime-safety.test.js",
     "test:portal": "node --test src/controllers/customer-portal.integration.test.js",
     "test:customer-plans": "node --test src/services/customer-subscription-plan.service.test.js src/controllers/customer-subscription-plan.integration.test.js",
-    "test:billing": "node --test src/services/razorpay.service.test.js src/services/subscription-billing.service.test.js src/services/subscription-limits.service.test.js src/services/customer-subscription.service.test.js src/services/customer-assistant.service.test.js src/controllers/customer-billing-pdf.test.js"
-  },
-  "prisma": {
-    "seed": "node prisma/seed.js"
+    "test:billing": "node --test src/services/razorpay.service.test.js src/services/official-subscription-plans.test.js src/services/subscription-billing.service.test.js src/services/subscription-limits.service.test.js src/services/customer-subscription.service.test.js src/services/customer-subscription-receipt.service.test.js src/services/customer-assistant.service.test.js src/controllers/customer-billing-pdf.test.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -32,6 +31,7 @@
     "node-cron": "^4.6.0",
     "nodemailer": "^10.6.0",
     "pdfkit": "^0.20.2",
+    "qrcode": "^1.5.4",
     "razorpay": "^2.9.8",
     "xlsx": "^0.18.5"
   },

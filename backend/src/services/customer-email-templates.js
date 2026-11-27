@@ -15,6 +15,14 @@ const actionUrl = (parameter, token) => {
   return url.toString();
 };
 
+const customerPortalUrl = () => {
+  const configuredOrigin = process.env.FRONTEND_URL?.split(",")[0]?.trim();
+  const origin = configuredOrigin || "http://localhost:5173";
+  const url = new URL("/", origin);
+  url.searchParams.set("customerPortal", "1");
+  return url.toString();
+};
+
 const brandedEmail = ({ heading, greeting, message, actionLabel, url, details }) => {
   const safeGreeting = escapeHtml(greeting);
   const safeMessage = escapeHtml(message);
@@ -81,20 +89,47 @@ export const customerEmailTemplate = (type, data) => {
         ...brandedEmail({
           heading: "Payment received",
           greeting: data.fullName,
-          message: `We recorded your payment under receipt ${data.receiptNumber}.`,
-          details: `${data.currency} ${data.amount} · ${data.paymentDate}`
+          message: `We recorded your payment under receipt ${data.receiptNumber}. A PDF copy of the receipt is attached.`,
+          details: [
+            `${data.currency} ${data.amount}`,
+            data.paymentDate,
+            data.paymentMethod,
+            data.transactionReference
+          ].filter(Boolean).join(" · "),
+          actionLabel: "Download receipt",
+          url: data.receiptDownloadUrl
+        })
+      };
+    case "PAYMENT_RECEIPT":
+      return {
+        subject: `Official payment receipt ${data.receiptNumber}`,
+        ...brandedEmail({
+          heading: "Your official payment receipt",
+          greeting: data.fullName,
+          message: `Your verified subscription payment is recorded under receipt ${data.receiptNumber}. The official PDF receipt is attached.`,
+          details: [
+            `${data.currency} ${data.amount}`,
+            data.paymentDate,
+            data.paymentMethod,
+            data.transactionReference
+          ].filter(Boolean).join(" · ")
         })
       };
     case "PAYMENT_REMINDER":
+    case "OVERDUE_REMINDER": {
+      const overdue = type === "OVERDUE_REMINDER";
       return {
-        subject: data.subject || "Payment reminder",
+        subject: data.subject || (overdue ? "Overdue payment reminder" : "Payment reminder"),
         ...brandedEmail({
-          heading: "Payment reminder",
+          heading: overdue ? "Your payment is overdue" : "Payment reminder",
           greeting: data.fullName,
           message: data.message,
-          details: data.details
+          details: data.details,
+          actionLabel: "Open customer portal",
+          url: customerPortalUrl()
         })
       };
+    }
     default:
       throw new Error(`Unsupported customer email template: ${type}`);
   }

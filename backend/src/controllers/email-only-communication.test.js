@@ -6,6 +6,21 @@ import {
   createReminderTemplate,
   updateReminderStatus,
 } from "./reminder.controller.js";
+import { getDashboardDataAccess } from "../services/dashboard-access.service.js";
+
+const makeAuthorizedRequest = (body, organisationId = "org-1") => {
+  const user = {
+    userId: "user-1",
+    organisationId,
+    role: "OWNER",
+    name: "Test Owner",
+  };
+  return {
+    user,
+    dashboardAccess: getDashboardDataAccess(user),
+    body,
+  };
+};
 
 const makeResponse = () => ({
   statusCode: 200,
@@ -24,10 +39,11 @@ test("communication creation rejects SMS and WhatsApp without sending or storing
   for (const channel of ["SMS", "WHATSAPP"]) {
     const response = makeResponse();
     await createCommunication(
-      {
-        user: { organisationId: "org-1", userId: "user-1" },
-        body: { customerId: "customer-1", channel, message: "test message" },
-      },
+      makeAuthorizedRequest({
+        customerId: "customer-1",
+        channel,
+        message: "test message",
+      }),
       response,
     );
     assert.equal(response.statusCode, 400);
@@ -39,16 +55,13 @@ test("reminder and template creation reject non-email delivery channels", async 
   for (const channel of ["SMS", "WHATSAPP"]) {
     const reminderResponse = makeResponse();
     await createReminder(
-      {
-        user: { organisationId: "org-1", userId: "user-1" },
-        body: {
-          customerId: "customer-1",
-          scheduledFor: "2026-11-21T00:00:00.000Z",
-          channel,
-          message: "test reminder",
-          dedupeKey: `test-${channel}`,
-        },
-      },
+      makeAuthorizedRequest({
+        customerId: "customer-1",
+        scheduledFor: "2026-11-21T00:00:00.000Z",
+        channel,
+        message: "test reminder",
+        dedupeKey: `test-${channel}`,
+      }),
       reminderResponse,
     );
     assert.equal(reminderResponse.statusCode, 400);
@@ -56,15 +69,12 @@ test("reminder and template creation reject non-email delivery channels", async 
 
     const templateResponse = makeResponse();
     await createReminderTemplate(
-      {
-        user: { organisationId: "org-1" },
-        body: {
-          name: `Test ${channel}`,
-          triggerStage: "ON_DUE_DATE",
-          channel,
-          body: "test template",
-        },
-      },
+      makeAuthorizedRequest({
+        name: `Test ${channel}`,
+        triggerStage: "ON_DUE_DATE",
+        channel,
+        body: "test template",
+      }),
       templateResponse,
     );
     assert.equal(templateResponse.statusCode, 400);
@@ -76,9 +86,8 @@ test("reminder status endpoint cannot fabricate email delivery success", async (
   const response = makeResponse();
   await updateReminderStatus(
     {
-      user: { organisationId: "org-1", userId: "user-1" },
+      ...makeAuthorizedRequest({ status: "SENT" }),
       params: { id: "reminder-1" },
-      body: { status: "SENT" },
     },
     response,
   );

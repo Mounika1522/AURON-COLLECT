@@ -21,7 +21,7 @@ const INITIAL_CUSTOMERS = [
     name: 'Alpha Tech Corp',
     code: 'ATC-01',
     contactPerson: 'Rohan Sharma',
-    email: 'accounts@alphatech.in',
+    email: '',
     phone: '+91 98490 11223',
     gstin: '36AABCA1234F1Z5',
     creditLimit: 500000,
@@ -37,7 +37,7 @@ const INITIAL_CUSTOMERS = [
     name: 'Zenith Logistics Ltd',
     code: 'ZLL-02',
     contactPerson: 'Vikram Reddy',
-    email: 'finance@zenithlogistics.in',
+    email: '',
     phone: '+91 98480 44556',
     gstin: '37AABCZ9876M1Z2',
     creditLimit: 300000,
@@ -53,7 +53,7 @@ const INITIAL_CUSTOMERS = [
     name: 'Nexus Retail Solutions',
     code: 'NRS-03',
     contactPerson: 'Ananya Verma',
-    email: 'payables@nexusretail.co.in',
+    email: '',
     phone: '+91 91234 56789',
     gstin: '29AABCN4567P1Z9',
     creditLimit: 400000,
@@ -69,7 +69,7 @@ const INITIAL_CUSTOMERS = [
     name: 'Vanguard Infra Projects',
     code: 'VIP-04',
     contactPerson: 'Suresh Menon',
-    email: 'billing@vanguardinfra.com',
+    email: '',
     phone: '+91 99887 76655',
     gstin: '36AABCV3210K1Z1',
     creditLimit: 800000,
@@ -374,7 +374,7 @@ export default function App() {
   const [portalMode, setPortalMode] = useState('admin');
   const [authTab, setAuthTab] = useState('staff'); // 'staff' | 'customer' | 'register'
   const [currentRole, setCurrentRole] = useState('Super Admin');
-  const [staffEmail, setStaffEmail] = useState('admin@alphaauron.com');
+  const [staffEmail, setStaffEmail] = useState('');
   const [staffPassword, setStaffPassword] = useState('Auron@2026');
   const [showPassword, setShowPassword] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
@@ -382,7 +382,7 @@ export default function App() {
   // Customer Portal Session
   const [activeCustomerId, setActiveCustomerId] = useState('CUST-1002');
   const [custLoginId, setCustLoginId] = useState('CUST-1002');
-  const [custLoginEmail, setCustLoginEmail] = useState('finance@zenithlogistics.in');
+  const [custLoginEmail, setCustLoginEmail] = useState('');
   const [regForm, setRegForm] = useState({ name: '', email: '', phone: '', gstin: '', orgCode: 'AURON-HQ' });
 
   // Navigation & UI States

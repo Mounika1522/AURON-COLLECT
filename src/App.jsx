@@ -1,11 +1,13 @@
 import ThemeToggle from './components/ThemeToggle';
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiRequest } from './services/api';
-import CustomerAuth from './components/CustomerAuth';
-import CustomerPortal from './components/CustomerPortal';
-import OrganizationCustomerPlanManager from './components/OrganizationCustomerPlanManager';
 import { getThemeClasses } from './theme';
 import { resolveDashboardDateRange } from './services/dashboard-date-range';
+import {
+  canAccessOrganizationBillingPortal,
+  getApprovedSubscriptionBillingCycles,
+  OFFICIAL_SAAS_PLANS,
+} from './services/subscription-plans';
 import {
   mapCommunication,
   mapCreditAdjustment,
@@ -18,25 +20,36 @@ import {
   mapTask,
 } from './services/backend-data';
 import {
-  formatReminderDateTimeIst,
+  formatReminderDateTime,
   getIstDateTimeLocalValue,
 } from './services/reminder-time';
+import {
+  canCancelReminder,
+  canDeleteReminder,
+  canSendReminderNow,
+} from './services/reminder-actions';
 import AdminSidebar from './components/AdminSidebar';
 import AdminHeader from './components/AdminHeader';
 import AIAssistant from './components/AIAssistant';
-import { jsPDF } from 'jspdf';
+import DataTableTools from './components/DataTableTools';
 import {
   LayoutDashboard, Users, FileText, Upload, Receipt, Clock,
   ShieldAlert, CheckSquare, Handshake, AlertTriangle, MessageSquare,
   FileSpreadsheet, BarChart3, Plus, CheckCircle2,
   Mail, Send, X,
   Eye, EyeOff, Building2, CreditCard, Download,
-  RefreshCw, AlertCircle, DollarSign
+  RefreshCw, AlertCircle, DollarSign, Trash2
 } from 'lucide-react';
-import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, Cell
-} from 'recharts';
+
+const CustomerAuth = lazy(() => import('./components/CustomerAuth'));
+const CustomerPortal = lazy(() => import('./components/CustomerPortal'));
+const DashboardCharts = lazy(() => import('./components/DashboardCharts'));
+const OrganizationSubscriptionPlans = lazy(
+  () => import('./components/OrganizationSubscriptionPlans')
+);
+const OrganizationCustomerPlanManager = lazy(
+  () => import('./components/OrganizationCustomerPlanManager')
+);
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const INITIAL_DASHBOARD_TODAY = todayISO();
@@ -185,6 +198,7 @@ const createAuronWatermark = async (logoData) => {
   });
 };
 const downloadReceiptPDF = async (receipt, customer) => {
+  const { jsPDF } = await import('jspdf');
   const doc = new jsPDF();
   const logoData = await loadAuronLogo();
   const watermark = await createAuronWatermark(logoData);
@@ -290,6 +304,7 @@ const downloadReceiptPDF = async (receipt, customer) => {
   doc.save(`${receipt.id}.pdf`);
 };
 const downloadInvoicePDF = async (invoice, customer, receipts) => {
+  const { jsPDF } = await import('jspdf');
   const doc = new jsPDF();
 
   const logoData = await loadAuronLogo();
@@ -466,7 +481,7 @@ export default function App() {
   const [portalMode, setPortalMode] = useState('auth');
   const [authTab, setAuthTab] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.has('customerReset') ? 'customer' : 'staff';
+    return params.has('customerReset') || params.has('customerPortal') ? 'customer' : 'staff';
   });
   const [currentUser, setCurrentUser] = useState(null);
   const [currentRole, setCurrentRole] = useState('');
@@ -538,6 +553,7 @@ const [authToken, setAuthToken] = useState('');
     setAuthToken(response.token);
     setCurrentRole(response.user.role);
     setCurrentUser(response.user);
+    setActiveModule('dashboard');
     setPortalMode('admin');
 
     showToast(`Welcome, ${response.user.name}!`);
@@ -575,6 +591,7 @@ const handleOrganizationRegistration = async (event) => {
     setAuthToken(response.token);
     setCurrentUser(response.user);
     setCurrentRole(response.user.role);
+    setActiveModule('dashboard');
     setPortalMode('admin');
     showToast(`Organization account created. Welcome, ${response.user.name}.`);
   } catch (error) {
@@ -599,13 +616,34 @@ const handleOrganizationRegistration = async (event) => {
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [collectionQueue, setCollectionQueue] = useState([]);
   const [reminders, setReminders] = useState([]);
+  const [reminderToDelete, setReminderToDelete] = useState(null);
+  const [deletingReminderId, setDeletingReminderId] = useState(null);
+  const [reminderToSend, setReminderToSend] = useState(null);
+  const [reminderEmailPreview, setReminderEmailPreview] = useState(null);
+  const [loadingReminderPreviewId, setLoadingReminderPreviewId] = useState(null);
+  const [sendingReminderId, setSendingReminderId] = useState(null);
   const [reminderTemplates, setReminderTemplates] = useState([]);
   const [subscriptionPlans, setSubscriptionPlans] = useState([]);
+  const availableSubscriptionPlans = Array.isArray(subscriptionPlans) ? subscriptionPlans : [];
+  const [razorpayBillingConfiguration, setRazorpayBillingConfiguration] = useState({
+    available: false,
+    mode: null,
+  });
   const [subscriptionPlanConfigs, setSubscriptionPlanConfigs] = useState([]);
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [subscriptionUsage, setSubscriptionUsage] = useState(null);
   const [billingHistory, setBillingHistory] = useState([]);
   const [subscriptionBillingCycle, setSubscriptionBillingCycle] = useState('MONTHLY');
+  const approvedSubscriptionBillingCycles = useMemo(
+    () => getApprovedSubscriptionBillingCycles(
+      Array.isArray(subscriptionPlans) ? subscriptionPlans : []
+    ),
+    [subscriptionPlans]
+  );
+  const activeSubscriptionBillingCycle =
+    approvedSubscriptionBillingCycles.some((cycle) => cycle.value === subscriptionBillingCycle)
+      ? subscriptionBillingCycle
+      : 'MONTHLY';
   const [isProcessingBilling, setIsProcessingBilling] = useState(false);
   const [planConfigDrafts, setPlanConfigDrafts] = useState({});
   const [isLoadingData, setIsLoadingData] = useState(false);
@@ -613,6 +651,9 @@ const handleOrganizationRegistration = async (event) => {
   const [reportData, setReportData] = useState(null);
   const [selectedReport, setSelectedReport] = useState('invoices');
   const [statementData, setStatementData] = useState(null);
+  const statementCurrencyEntries = Object.entries(
+    statementData?.currencySummaries || {},
+  );
   const [statementFromDate, setStatementFromDate] = useState(
     new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)
   );
@@ -662,16 +703,12 @@ const handleOrganizationRegistration = async (event) => {
     setIsLoadingDashboard(!dashboardDateRange.error);
     setFilterExecutive(executive);
   };
-  // Customer Directory Filters
-const [customerSearch, setCustomerSearch] = useState('');
-const [customerRiskFilter, setCustomerRiskFilter] = useState('All');
-const [customerBranchFilter, setCustomerBranchFilter] = useState('All');
-
   // Core Financial Ledger State
   const [customers, setCustomers] = useState([]);
   
   const [invoices, setInvoices] = useState([]);
   const [receipts, setReceipts] = useState([]);
+  const [verifiedSubscriptionReceipts, setVerifiedSubscriptionReceipts] = useState([]);
   const [selectedReceipt, setSelectedReceipt] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [creditNotes, setCreditNotes] = useState([]);
@@ -703,8 +740,8 @@ const [orgSettings, setOrgSettings] = useState(() => {
           website: '',
           logoUrl: '',
           primaryColor: '#E50914',
-          secondaryColor: '#000000',
-          sidebarColor: '#111111',
+          secondaryColor: '#94A3B8',
+          sidebarColor: '#102038',
           themeMode: 'dark'
         }, ...JSON.parse(savedSettings) }
       : {
@@ -720,8 +757,8 @@ const [orgSettings, setOrgSettings] = useState(() => {
           website: '',
           logoUrl: '',
           primaryColor: '#E50914',
-          secondaryColor: '#000000',
-          sidebarColor: '#111111',
+          secondaryColor: '#94A3B8',
+          sidebarColor: '#102038',
           themeMode: 'dark'
         };
   } catch {
@@ -738,8 +775,8 @@ const [orgSettings, setOrgSettings] = useState(() => {
       website: '',
       logoUrl: '',
       primaryColor: '#E50914',
-      secondaryColor: '#000000',
-      sidebarColor: '#111111',
+      secondaryColor: '#94A3B8',
+      sidebarColor: '#102038',
       themeMode: 'dark'
     };
   }
@@ -918,9 +955,15 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
     }
   ]);
 
-  const showToast = (msg) => {
-    setToastMessage(msg);
+  const showToast = (msg, type = 'default') => {
+    setToastMessage({ message: msg, type });
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const handleStaffPasswordChanged = (token) => {
+    localStorage.setItem('auron_collect_token', token);
+    setAuthToken(token);
+    showToast('Password updated. Other active sessions were signed out.');
   };
 
   const handleCustomerLogin = (response) => {
@@ -1112,6 +1155,7 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
     setCustomers([]);
     setInvoices([]);
     setReceipts([]);
+    setVerifiedSubscriptionReceipts([]);
     setCreditNotes([]);
     setPtps([]);
     setDisputes([]);
@@ -1122,6 +1166,7 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
     setReminders([]);
     setReminderTemplates([]);
     setSubscriptionPlans([]);
+    setRazorpayBillingConfiguration({ available: false, mode: null });
     setSubscriptionPlanConfigs([]);
     setCurrentSubscription(null);
     setSubscriptionUsage(null);
@@ -1354,6 +1399,23 @@ setRcpForm((prev) => ({
   useEffect(() => {
     if (!authToken) return;
 
+    const fetchVerifiedSubscriptionReceipts = async () => {
+      try {
+        const response = await apiRequest('/api/receipts/customer-subscriptions', {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        setVerifiedSubscriptionReceipts(response.receipts || []);
+      } catch (error) {
+        reportLoadFailure('Verified subscription receipts', error);
+      }
+    };
+
+    fetchVerifiedSubscriptionReceipts();
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken) return;
+
     const fetchPromises = async () => {
       try {
         const response = await apiRequest('/api/promises', {
@@ -1503,7 +1565,20 @@ setRcpForm((prev) => ({
         apiRequest('/api/subscriptions/plans', {
           headers: { Authorization: `Bearer ${authToken}` },
         }).then((response) => {
-          if (active) setSubscriptionPlans(response.plans || []);
+          if (!Array.isArray(response?.plans)) {
+            throw new TypeError('Subscription plans API returned an invalid response.');
+          }
+          if (active) {
+            setSubscriptionPlans(response.plans);
+            const mode = response.billingConfiguration?.mode;
+            const available =
+              response.billingConfiguration?.available === true &&
+              (mode === 'test' || mode === 'live');
+            setRazorpayBillingConfiguration({
+              available,
+              mode: available ? mode : null,
+            });
+          }
         }),
       ];
 
@@ -1512,8 +1587,11 @@ setRcpForm((prev) => ({
           apiRequest('/api/subscriptions/plans/configuration', {
             headers: { Authorization: `Bearer ${authToken}` },
           }).then((response) => {
+            if (!Array.isArray(response?.plans)) {
+              throw new TypeError('Subscription plan configuration API returned an invalid response.');
+            }
             if (active) {
-              const plans = response.plans || [];
+              const plans = response.plans;
               setSubscriptionPlanConfigs(plans);
               setPlanConfigDrafts(Object.fromEntries(plans.map((plan) => [
                 plan.code,
@@ -1546,11 +1624,15 @@ setRcpForm((prev) => ({
         const historyResponse = await apiRequest('/api/subscriptions/billing/history', {
           headers: { Authorization: `Bearer ${authToken}` },
         });
-        if (active) setBillingHistory(historyResponse.invoices || []);
+        if (!Array.isArray(historyResponse?.invoices)) {
+          throw new TypeError('Subscription billing history API returned an invalid response.');
+        }
+        if (active) setBillingHistory(historyResponse.invoices);
       } catch (error) {
         if (active) {
           console.error('Billing history request failed:', error);
           setBillingHistory([]);
+          setDataLoadError('Subscription billing history could not be loaded. Check the backend connection and refresh.');
         }
       }
 
@@ -1564,9 +1646,19 @@ setRcpForm((prev) => ({
           }),
         ]);
         if (active) {
-          setCurrentSubscription(subscriptionResponse.subscription || null);
-          setActivePlan(subscriptionResponse.subscription?.plan?.name || '');
-          setSubscriptionUsage(usageResponse.usage || null);
+          const subscription = subscriptionResponse?.subscription;
+          setCurrentSubscription(
+            subscription && typeof subscription === 'object' && !Array.isArray(subscription)
+              ? subscription
+              : null
+          );
+          setActivePlan(subscription?.plan?.name || '');
+          const usage = usageResponse?.usage;
+          setSubscriptionUsage(
+            usage && typeof usage === 'object' && !Array.isArray(usage)
+              ? usage
+              : null
+          );
         }
       } catch (error) {
         if (!active) return;
@@ -1574,6 +1666,7 @@ setRcpForm((prev) => ({
         setSubscriptionUsage(null);
         if (error.status !== 404) {
           console.error('Subscription data request failed:', error);
+          setDataLoadError('Subscription details could not be loaded. Check the backend connection and refresh.');
         }
       }
     };
@@ -2064,6 +2157,111 @@ const handleReminderStatus = async (reminder, status) => {
   }
 };
 
+const refreshReminderHistory = async () => {
+  const response = await apiRequest('/api/reminders', {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  setReminders((response.reminders || []).map(mapReminder));
+};
+
+const handlePreviewReminderEmail = async (reminder) => {
+  if (!canSendReminderNow(reminder, currentRole)) {
+    showToast('Only organization admins and owners can send pending reminders.', 'error');
+    return;
+  }
+
+  setReminderToSend(reminder);
+  setReminderEmailPreview(null);
+  setLoadingReminderPreviewId(reminder.id);
+  try {
+    const response = await apiRequest(`/api/reminders/${reminder.id}/preview`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    setReminderEmailPreview(response.preview);
+  } catch (error) {
+    console.error('Preview reminder email API Error:', error);
+    setReminderToSend(null);
+    showToast(error.message || 'Unable to prepare reminder email preview.', 'error');
+  } finally {
+    setLoadingReminderPreviewId(null);
+  }
+};
+
+const handleSendReminderNow = async () => {
+  if (!reminderToSend || !reminderEmailPreview || !canSendReminderNow(reminderToSend, currentRole)) {
+    showToast('This reminder is no longer eligible to send.', 'error');
+    return;
+  }
+
+  const reminderId = reminderToSend.id;
+  setSendingReminderId(reminderId);
+  try {
+    await apiRequest(`/api/reminders/${reminderId}/send-now`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    setReminderToSend(null);
+    setReminderEmailPreview(null);
+    try {
+      await refreshReminderHistory();
+      showToast('Reminder email sent successfully.', 'success');
+    } catch (refreshError) {
+      console.error('Refresh reminder history API Error:', refreshError);
+      showToast(
+        'Reminder email was sent successfully, but history could not be refreshed. Refresh the page to verify.',
+        'success',
+      );
+    }
+  } catch (error) {
+    console.error('Send reminder email API Error:', error);
+    try {
+      await refreshReminderHistory();
+    } catch (refreshError) {
+      console.error('Refresh reminder history API Error:', refreshError);
+    }
+    setReminderToSend(null);
+    setReminderEmailPreview(null);
+    showToast(error.message || 'Reminder email could not be sent.', 'error');
+  } finally {
+    setSendingReminderId(null);
+  }
+};
+
+const handleDeleteReminder = async () => {
+  if (!reminderToDelete || !canDeleteReminder(reminderToDelete, currentRole)) {
+    showToast('Only organization admins and owners can delete eligible reminders.', 'error');
+    return;
+  }
+
+  const reminderId = reminderToDelete.id;
+  setDeletingReminderId(reminderId);
+  try {
+    await apiRequest(`/api/reminders/${reminderId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+
+    setReminders((previous) => previous.filter((item) => item.id !== reminderId));
+    setReminderToDelete(null);
+
+    try {
+      await refreshReminderHistory();
+      showToast('Reminder deleted successfully.', 'success');
+    } catch (refreshError) {
+      console.error('Refresh reminder history API Error:', refreshError);
+      showToast(
+        'Reminder deleted successfully, but history could not be refreshed. Refresh the page to verify.',
+        'error',
+      );
+    }
+  } catch (error) {
+    console.error('Delete reminder API Error:', error);
+    showToast(error.message || 'Unable to delete reminder.', 'error');
+  } finally {
+    setDeletingReminderId(null);
+  }
+};
+
 const handleCreateReminderTemplate = async (event) => {
   event.preventDefault();
   try {
@@ -2230,7 +2428,9 @@ const handleDownloadReceipt = async (receipt, print = false) => {
   try {
     const receiptName = receipt.receiptNumber || receipt.id;
     await downloadProtectedFile(
-      `/api/receipts/${encodeURIComponent(receipt.id)}/pdf`,
+      receipt.recordType === 'subscription'
+        ? `/api/receipts/customer-subscriptions/${encodeURIComponent(receipt.id)}/pdf`
+        : `/api/receipts/${encodeURIComponent(receipt.id)}/pdf`,
       `${receiptName}.pdf`,
       print
     );
@@ -2396,7 +2596,10 @@ const refreshBillingDetails = async () => {
   const historyResponse = await apiRequest('/api/subscriptions/billing/history', {
     headers: { Authorization: `Bearer ${authToken}` },
   });
-  setBillingHistory(historyResponse.invoices || []);
+  if (!Array.isArray(historyResponse?.invoices)) {
+    throw new TypeError('Subscription billing history API returned an invalid response.');
+  }
+  setBillingHistory(historyResponse.invoices);
 
   try {
     const [subscriptionResponse, usageResponse] = await Promise.all([
@@ -2407,9 +2610,19 @@ const refreshBillingDetails = async () => {
         headers: { Authorization: `Bearer ${authToken}` },
       }),
     ]);
-    setCurrentSubscription(subscriptionResponse.subscription || null);
-    setActivePlan(subscriptionResponse.subscription?.plan?.name || '');
-    setSubscriptionUsage(usageResponse.usage || null);
+    const subscription = subscriptionResponse?.subscription;
+    setCurrentSubscription(
+      subscription && typeof subscription === 'object' && !Array.isArray(subscription)
+        ? subscription
+        : null
+    );
+    setActivePlan(subscription?.plan?.name || '');
+    const usage = usageResponse?.usage;
+    setSubscriptionUsage(
+      usage && typeof usage === 'object' && !Array.isArray(usage)
+        ? usage
+        : null
+    );
   } catch (error) {
     if (error.status !== 404) throw error;
     setCurrentSubscription(null);
@@ -2451,15 +2664,22 @@ const loadRazorpayCheckout = async () => {
   });
 };
 
-const handleSubscriptionCheckout = async (plan) => {
+const handleSubscriptionCheckout = async (
+  plan,
+  billingCycle = activeSubscriptionBillingCycle
+) => {
+  if (!canAccessOrganizationBillingPortal(currentRole)) {
+    showToast('Only organization administrators and owners can manage SaaS billing.');
+    return;
+  }
   if (isProcessingBilling) return;
   const currentEnd = currentSubscription?.endsAt
     ? new Date(currentSubscription.endsAt).toLocaleDateString()
     : null;
   const effectiveMessage = currentEnd
     ? `Payment will be charged now; the selected plan starts at the current term's renewal (${currentEnd}). No proration is applied.`
-    : 'The selected plan starts immediately after successful test-mode payment.';
-  if (!window.confirm(`Continue with ${plan.name} (${subscriptionBillingCycle.toLowerCase()})?\n\n${effectiveMessage}`)) return;
+    : 'The selected plan starts immediately after successful payment.';
+  if (!window.confirm(`Continue with ${plan.name} (${billingCycle.toLowerCase()})?\n\n${effectiveMessage}`)) return;
 
   setIsProcessingBilling(true);
   try {
@@ -2476,7 +2696,7 @@ const handleSubscriptionCheckout = async (plan) => {
       },
       body: JSON.stringify({
         planCode: plan.code,
-        billingCycle: subscriptionBillingCycle,
+        billingCycle,
       }),
     });
 
@@ -2502,7 +2722,7 @@ const handleSubscriptionCheckout = async (plan) => {
             }),
           });
           await refreshBillingDetails();
-          showToast('Test payment verified. Subscription billing history updated.');
+          showToast('Payment verified. Subscription billing history updated.');
         } catch (error) {
           console.error('Subscription payment verification failed:', error);
           showToast(error.message || 'Unable to verify the subscription payment.');
@@ -2535,9 +2755,12 @@ const refreshPlanConfigurations = async () => {
       headers: { Authorization: `Bearer ${authToken}` },
     }),
   ]);
-  const configurations = configResponse.plans || [];
+  if (!Array.isArray(configResponse?.plans) || !Array.isArray(plansResponse?.plans)) {
+    throw new TypeError('Subscription plan configuration API returned an invalid response.');
+  }
+  const configurations = configResponse.plans;
   setSubscriptionPlanConfigs(configurations);
-  setSubscriptionPlans(plansResponse.plans || []);
+  setSubscriptionPlans(plansResponse.plans);
   setPlanConfigDrafts(Object.fromEntries(configurations.map((item) => [
     item.code,
     {
@@ -3005,7 +3228,10 @@ const handleApprovePlan = async (plan, approval) => {
   // --- DUAL LOGIN & REGISTRATION VIEW ---
   if (portalMode === 'auth') {
     return (
-      <div className={`min-h-screen flex flex-col justify-between p-4 sm:p-8 ${bgCanvas}`}>
+      <div
+        className={`app-auth-screen min-h-screen flex flex-col justify-between p-4 sm:p-8 ${bgCanvas}`}
+        data-theme={darkMode ? 'dark' : 'light'}
+      >
         {/* Top Bar */}
         <div className="max-w-5xl w-full mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -3028,7 +3254,7 @@ const handleApprovePlan = async (plan, approval) => {
         </div>
 
         {/* Center Auth Card */}
-        <div className={`max-w-lg w-full mx-auto my-8 rounded-2xl border p-6 sm:p-8 ${bgCard} motion-enter`}>
+        <div className={`app-auth-card max-w-lg w-full mx-auto my-8 rounded-2xl border p-6 sm:p-8 ${bgCard} motion-enter`}>
         <>
     <div className="mb-6">
          <span className="inline-block px-2.5 py-1 rounded-md bg-[#E50914]/15 text-[#E50914] text-xs font-bold mb-2">
@@ -3080,20 +3306,22 @@ const handleApprovePlan = async (plan, approval) => {
             className={authTab === 'customer' ? '' : 'motion-fade-enter'}
           >
           {authTab === 'customer' && (
-            <CustomerAuth
-              onLogin={handleCustomerLogin}
-              onBackToStaff={() => {
-                if (authToken && currentUser) {
-                  setAuthTab('staff');
-                  setPortalMode('admin');
-                } else {
-                  setAuthTab('staff');
-                }
-              }}
-              bgSurface={bgSurface}
-              textMuted={textMuted}
-              resetToken={new URLSearchParams(window.location.search).get('customerReset')}
-            />
+            <Suspense fallback={<div className={`py-8 text-center text-xs ${textMuted}`} role="status">Loading customer sign-in…</div>}>
+              <CustomerAuth
+                onLogin={handleCustomerLogin}
+                onBackToStaff={() => {
+                  if (authToken && currentUser) {
+                    setAuthTab('staff');
+                    setPortalMode('admin');
+                  } else {
+                    setAuthTab('staff');
+                  }
+                }}
+                bgSurface={bgSurface}
+                textMuted={textMuted}
+                resetToken={new URLSearchParams(window.location.search).get('customerReset')}
+              />
+            </Suspense>
           )}
           {authTab === 'customer' && authToken && currentUser && (
             <button
@@ -3248,51 +3476,78 @@ const handleApprovePlan = async (plan, approval) => {
     if (!customerToken) return null;
 
     return (
-      <CustomerPortal
-        token={customerToken}
-        user={customerUser}
-        onTokenChange={(token) => {
-          localStorage.setItem('auron_customer_token', token);
-          setCustomerToken(token);
-        }}
-        onSessionExpired={() => clearCustomerSession('Your customer session expired. Please sign in again.')}
-        onLogout={(message) => clearCustomerSession(message || 'You have been signed out.')}
-        darkMode={customerDarkMode}
-        setDarkMode={setCustomerDarkMode}
-        bgCanvas={customerTheme.bgCanvas}
-        bgCard={customerTheme.bgCard}
-        bgSurface={customerTheme.bgSurface}
-        textMuted={customerTheme.textMuted}
-        borderSubtle={customerTheme.borderSubtle}
-      />
+      <Suspense fallback={<div className={`min-h-screen grid place-items-center ${customerTheme.bgCanvas}`} role="status">Loading customer portal…</div>}>
+        <CustomerPortal
+          token={customerToken}
+          user={customerUser}
+          onOrganizationContactSales={() => showToast('Contact Alpha Auron to discuss Enterprise pricing.')}
+          onTokenChange={(token) => {
+            localStorage.setItem('auron_customer_token', token);
+            setCustomerToken(token);
+          }}
+          onSessionExpired={() => clearCustomerSession('Your customer session expired. Please sign in again.')}
+          onLogout={(message) => clearCustomerSession(message || 'You have been signed out.')}
+          darkMode={customerDarkMode}
+          setDarkMode={setCustomerDarkMode}
+          bgCanvas={customerTheme.bgCanvas}
+          bgCard={customerTheme.bgCard}
+          bgSurface={customerTheme.bgSurface}
+          textMuted={customerTheme.textMuted}
+          borderSubtle={customerTheme.borderSubtle}
+        />
+      </Suspense>
     );
   }
-  // --- ADMIN WORKSPACE NAVIGATION ITEMS (ALL 14 MODULES) ---
+  // --- ADMIN WORKSPACE NAVIGATION ITEMS ---
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'onboarding', label: 'Org Setup Wizard', icon: Building2 },
     { id: 'customers', label: 'Customers', icon: Users },
     { id: 'invoices', label: 'Invoices & Bulk Import', icon: FileText },
-    { id: 'receipts', label: 'Receipts & Allocation', icon: Receipt },
-    { id: 'ageing', label: 'Ageing Engine', icon: Clock },
-    { id: 'queue', label: 'Priority & Risk Queue', icon: ShieldAlert },
+    { id: 'receipts', label: 'Payments & Receipts', icon: Receipt },
+    { id: 'ageing', label: 'Ageing Reports', icon: Clock },
+    { id: 'queue', label: 'Collection Queue', icon: ShieldAlert },
     { id: 'tasks', label: 'Tasks & Follow-ups', icon: CheckSquare },
     { id: 'promises', label: 'Promise-to-Pay (PTP)', icon: Handshake },
     { id: 'disputes', label: 'Disputes Management', icon: AlertTriangle },
     { id: 'communications', label: 'Email & Interactions', icon: MessageSquare },
     { id: 'statements', label: 'Customer Statements', icon: FileSpreadsheet },
     { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
-    { id: 'billing', label: 'Subscription & Billing', icon: CreditCard }
+    { id: 'billing', label: 'Subscription & Billing', icon: CreditCard },
+    {
+      id: 'organization-plans',
+      label: 'Subscription Plans',
+      icon: CreditCard,
+      allowedRoles: ['ADMIN', 'OWNER'],
+    },
   ];
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => !item.allowedRoles || item.allowedRoles.includes(currentRole)
+  );
 
   // --- MAIN ADMIN WORKSPACE ---
   return (
-    <div className={`min-h-screen flex flex-col ${bgCanvas}`}>
+    <div
+      className={`app-admin-shell min-h-screen flex flex-col ${bgCanvas}`}
+      data-theme={darkMode ? 'dark' : 'light'}
+    >
       {/* Toast Notification Banner */}
       {toastMessage && (
-        <div className="fixed top-16 right-4 z-50 bg-[#E50914] text-white px-4 py-3 rounded-xl shadow-2xl text-xs font-semibold flex items-center space-x-2 animate-bounce">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{toastMessage}</span>
+        <div
+          className={`app-toast fixed top-16 right-4 z-50 ${
+            toastMessage.type === 'success'
+              ? 'bg-emerald-600'
+              : toastMessage.type === 'error'
+                ? 'bg-rose-700'
+                : 'bg-[#E50914]'
+          } text-white px-4 py-3 rounded-xl shadow-2xl text-xs font-semibold flex items-center space-x-2`}
+          role="status"
+          aria-live="polite"
+        >
+          {toastMessage.type === 'error'
+            ? <AlertCircle className="w-4 h-4 shrink-0" />
+            : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+          <span>{toastMessage.message}</span>
         </div>
       )}
 
@@ -3304,6 +3559,11 @@ const handleApprovePlan = async (plan, approval) => {
   currentUser={currentUser}
   authToken={authToken}
   onLogout={handleLogout}
+  onPasswordChanged={handleStaffPasswordChanged}
+  onOpenSettings={() => {
+    setActiveModule('onboarding');
+    setMobileMenuOpen(false);
+  }}
   onOpenCustomerPortal={() => {
     setAuthTab('customer');
     setPortalMode('auth');
@@ -3323,7 +3583,7 @@ const handleApprovePlan = async (plan, approval) => {
         <div
           aria-hidden={!mobileMenuOpen}
           inert={!mobileMenuOpen}
-          className={`fixed inset-0 z-50 lg:hidden flex bg-black/70 backdrop-blur-xs transition-opacity duration-200 ease-out ${
+          className={`app-mobile-navigation fixed inset-0 z-50 lg:hidden flex bg-black/70 backdrop-blur-xs transition-opacity duration-200 ease-out ${
             mobileMenuOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
           }`}
         >
@@ -3338,7 +3598,7 @@ const handleApprovePlan = async (plan, approval) => {
                   </button>
                 </div>
                 <div className="space-y-1">
-                  {NAV_ITEMS.map((item) => {
+                  {visibleNavItems.map((item) => {
                     const Icon = item.icon;
                     return (
                       <button
@@ -3367,7 +3627,7 @@ const handleApprovePlan = async (plan, approval) => {
         {/* DESKTOP LEFT SIDEBAR */}
         {/* DESKTOP LEFT SIDEBAR */}
 <AdminSidebar
-  NAV_ITEMS={NAV_ITEMS}
+  NAV_ITEMS={visibleNavItems}
   activeModule={activeModule}
   sidebarColor={orgSettings.sidebarColor}
 primaryColor={orgSettings.primaryColor}
@@ -3380,7 +3640,7 @@ secondaryColor={orgSettings.secondaryColor}
 />
 
         {/* MAIN WORKSPACE VIEWPORT */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 pb-28 space-y-6">
+        <main className="app-admin-main flex-1 overflow-y-auto p-4 sm:p-6 pb-28 space-y-6">
           {isLoadingData && (
             <div className={`flex items-center gap-2 text-xs ${textMuted}`} role="status">
               <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" />
@@ -3560,96 +3820,31 @@ secondaryColor={orgSettings.secondaryColor}
               </div>
 
               {/* Charts Row */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className={`lg:col-span-2 p-5 rounded-2xl border ${bgCard}`}>
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="text-sm font-bold">Net Billed vs. Collected Recovery Trend</h3>
-                      <p className={`text-xs ${textMuted}`}>
-                        Invoice amounts less approved credits and allocated receipts in {selectedDashboardCurrency || 'selected currency'}
-                      </p>
-                    </div>
-                    <span className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold ${bgSurface}`}>
-                      {dashboardDateRange.label}
-                    </span>
+              <Suspense
+                fallback={
+                  <div className={`grid min-h-64 place-items-center rounded-2xl border ${bgCard}`} role="status">
+                    <span className={`text-xs ${textMuted}`}>Loading dashboard charts…</span>
                   </div>
-                  <div className="h-64 w-full">
-                    {dashboardTrendData.some((entry) => entry.billed !== 0 || entry.collected !== 0) ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={dashboardTrendData}>
-                        <defs>
-                          <linearGradient id="billedGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#E50914" stopOpacity={0.35} />
-                            <stop offset="95%" stopColor="#E50914" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="collGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10B981" stopOpacity={0.35} />
-                            <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#222' : '#eee'} />
-                        <XAxis dataKey="month" stroke="#808080" fontSize={11} />
-                        <YAxis stroke="#808080" fontSize={11} tickFormatter={(v) => `${selectedDashboardCurrency} ${(v / 1000).toFixed(0)}k`} />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: darkMode ? '#171717' : '#fff',
-                            borderColor: '#333',
-                            borderRadius: '10px',
-                            fontSize: '12px'
-                          }}
-                          formatter={(val) => formatDashboardCurrency(val, selectedDashboardCurrency)}
-                        />
-                        <Area type="monotone" dataKey="billed" stroke="#E50914" strokeWidth={2} fill="url(#billedGrad)" name="Net Billed" isAnimationActive={!prefersReducedMotion} animationDuration={450} />
-                        <Area type="monotone" dataKey="collected" stroke="#10B981" strokeWidth={2} fill="url(#collGrad)" name="Collected" isAnimationActive={!prefersReducedMotion} animationDuration={450} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                    ) : (
-                      <div className={`h-full flex items-center justify-center text-xs ${textMuted}`}>
-                        {selectedDashboardCurrency ? `No billing or collection history in ${selectedDashboardCurrency}.` : 'No currency data available.'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className={`p-5 rounded-2xl border ${bgCard}`}>
-                  <h3 className="text-sm font-bold mb-1">Ageing Bucket Distribution</h3>
-                  <p className={`text-xs mb-4 ${textMuted}`}>
-                    Outstanding receivables by overdue days • {selectedDashboardCurrency || 'N/A'}
-                  </p>
-                  <div className="h-64 w-full">
-                    {ageingChartData.length ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={ageingChartData} layout="vertical">
-                        <XAxis type="number" hide />
-                        <YAxis dataKey="name" type="category" width={85} stroke="#808080" fontSize={11} />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: darkMode ? '#171717' : '#fff',
-                            borderColor: '#333',
-                            borderRadius: '10px',
-                            fontSize: '12px'
-                          }}
-                          formatter={(val) => formatDashboardCurrency(val, selectedDashboardCurrency)}
-                        />
-                        <Bar dataKey="amount" radius={[0, 6, 6, 0]} name="Outstanding" isAnimationActive={!prefersReducedMotion} animationDuration={450}>
-                          {ageingChartData.map((entry, idx) => (
-                            <Cell key={idx} fill={idx === 0 ? '#10B981' : idx < 3 ? '#F59E0B' : '#E50914'} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                    ) : (
-                      <div className={`h-full flex items-center justify-center text-xs ${textMuted}`}>
-                        {visibleAgeing ? 'No outstanding balances in this currency.' : 'Ageing data is unavailable.'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+                }
+              >
+                <DashboardCharts
+                  ageingChartData={ageingChartData}
+                  bgCard={bgCard}
+                  bgSurface={bgSurface}
+                  darkMode={darkMode}
+                  dashboardDateRangeLabel={dashboardDateRange.label}
+                  dashboardTrendData={dashboardTrendData}
+                  formatDashboardCurrency={formatDashboardCurrency}
+                  prefersReducedMotion={prefersReducedMotion}
+                  selectedDashboardCurrency={selectedDashboardCurrency}
+                  textMuted={textMuted}
+                  visibleAgeing={visibleAgeing}
+                />
+              </Suspense>
 
               {/* Priority Accounts & Live Automated Dispatch Preview */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+                <div className={`min-w-0 p-5 rounded-2xl border ${bgCard}`}>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-bold">Top Priority Collection Queue</h3>
                     <button
@@ -3659,30 +3854,32 @@ secondaryColor={orgSettings.secondaryColor}
                       View Full Queue →
                     </button>
                   </div>
-                  <table className="w-full text-left text-xs min-w-[420px]">
-                    <thead>
-                      <tr className={`border-b ${borderSubtle} ${textMuted}`}>
-                        <th className="pb-2">Customer</th>
-                        <th className="pb-2">Overdue</th>
-                        <th className="pb-2">Max Age</th>
-                        <th className="pb-2">Risk Score</th>
-                      </tr>
-                    </thead>
-                    <tbody className={`divide-y ${borderSubtle}`}>
-                      {priorityQueue.map((c) => (
-                        <tr key={c.id}>
-                          <td className="py-3 font-semibold">{c.name}</td>
-                          <td className="py-3 font-bold text-[#E50914]">{formatDashboardCurrency(c.overdueAmt, c.currency)}</td>
-                          <td className="py-3">{c.maxDays}d</td>
-                          <td className="py-3">
-                            <span className="px-2 py-0.5 rounded bg-[#E50914]/15 text-[#E50914] font-bold">
-                              {c.priorityScore}/100
-                            </span>
-                          </td>
+                  <div className="w-full overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[420px]">
+                      <thead>
+                        <tr className={`border-b ${borderSubtle} ${textMuted}`}>
+                          <th className="pb-2">Customer</th>
+                          <th className="pb-2">Overdue</th>
+                          <th className="pb-2">Max Age</th>
+                          <th className="pb-2">Risk Score</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className={`divide-y ${borderSubtle}`}>
+                        {priorityQueue.map((c) => (
+                          <tr key={c.id}>
+                            <td className="py-3 font-semibold">{c.name}</td>
+                            <td className="py-3 font-bold text-[#E50914]">{formatDashboardCurrency(c.overdueAmt, c.currency)}</td>
+                            <td className="py-3">{c.maxDays}d</td>
+                            <td className="py-3">
+                              <span className="px-2 py-0.5 rounded bg-[#E50914]/15 text-[#E50914] font-bold">
+                                {c.priorityScore}/100
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div className={`p-5 rounded-2xl border ${bgCard}`}>
@@ -3704,13 +3901,20 @@ secondaryColor={orgSettings.secondaryColor}
                             {email.deliveryStatus}
                           </span>
                         </div>
-                        <p className={`break-all text-[11px] ${textMuted}`}>{email.recipient}</p>
+                        <p className={`break-all text-[11px] ${textMuted}`}>
+                          {email.recipient || 'Waiting for a verified portal email'}
+                        </p>
                         <p className="mt-1 font-medium">{email.subject || 'Payment reminder'}</p>
                         <p className={`mt-1 text-[10px] ${textMuted}`}>
                           {email.sentAt
-                            ? `${email.deliveryStatus === 'SMTP_ACCEPTED' ? 'Accepted' : 'Attempted'} ${formatReminderDateTimeIst(email.sentAt)}`
-                            : `Scheduled ${formatReminderDateTimeIst(email.scheduledFor)}`}
+                            ? `${email.deliveryStatus === 'SMTP_ACCEPTED' ? 'Accepted' : 'Attempted'} ${formatReminderDateTime(email.sentAt, email.customerTimeZone)}`
+                            : email.lastAttemptAt
+                              ? `Attempted ${formatReminderDateTime(email.lastAttemptAt, email.customerTimeZone)}`
+                              : email.nextAttemptAt
+                                ? `Next attempt ${formatReminderDateTime(email.nextAttemptAt, email.customerTimeZone)}`
+                                : `Scheduled ${formatReminderDateTime(email.scheduledFor, email.customerTimeZone)}`}
                           {email.invoiceNumber ? ` · ${email.invoiceNumber}` : ''}
+                          {email.attemptCount ? ` · ${email.attemptCount} attempt${email.attemptCount === 1 ? '' : 's'}` : ''}
                         </p>
                         {email.failureStatus && <p className="mt-1 text-[11px] text-rose-400">{email.failureStatus}</p>}
                       </div>
@@ -4033,62 +4237,85 @@ secondaryColor={orgSettings.secondaryColor}
               >
                 + Add Customer
               </button>
-              <table className="w-full text-left text-xs min-w-[700px]">
-                <thead>
-                  <tr className={`border-b ${borderSubtle} ${textMuted}`}>
-                    <th className="pb-3">Customer ID</th>
-                    <th className="pb-3">Account Name</th>
-                    <th className="pb-3">Contact</th>
-                    <th className="pb-3">Credit Limit</th>
-                    <th className="pb-3">Total Outstanding</th>
-                    <th className="pb-3">Risk Rating</th>
-                    <th className="pb-3">Action</th>
-                  </tr>
-                </thead>
-                <tbody className={`divide-y ${borderSubtle}`}>
-                  {customers.map((c) => {
-                    const out = enrichedInvoices
-                      .filter((i) => i.customerId === c.id)
-                      .reduce((s, i) => s + i.outstanding, 0);
-                    return (
-                      <tr key={c.id} className="hover:bg-[#E50914]/5">
-                        <td className="py-3 font-mono font-semibold">{c.id}</td>
-                        <td className="py-3 font-bold">{c.name}</td>
-                        <td className="py-3">
-                          <div>{c.contactPerson}</div>
-                          <div className={`text-[10px] ${textMuted}`}>{c.phone}</div>
-                        </td>
-                        <td className="py-3">{formatINR(c.creditLimit)}</td>
-                        <td className="py-3 font-bold text-[#E50914]">{formatINR(out)}</td>
-                        <td className="py-3">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              c.riskRating === 'Low'
-                                ? 'bg-emerald-500/15 text-emerald-400'
-                                : c.riskRating === 'Medium'
-                                ? 'bg-amber-500/15 text-amber-400'
-                                : 'bg-[#E50914]/15 text-[#E50914]'
-                            }`}
-                          >
-                            {c.riskRating}
-                          </span>
-                        </td>
-                        <td className="py-3">
-                          <button
-                            onClick={() => {
-                              setSelectedCustomerDrawer(c);
-                              setIsCustomerDrawerOpen(true);
-                            }}
-                            className="px-3 py-1 rounded-lg bg-[#E50914] text-white text-[11px] font-semibold"
-                          >
-                            Open Profile
-                          </button>
-                        </td>
+              <DataTableTools
+                rows={customers}
+                searchLabel="customers"
+                getSearchText={(customer) => [
+                  customer.id,
+                  customer.name,
+                  customer.contactPerson,
+                  customer.email,
+                  customer.phone,
+                ].join(' ')}
+                filters={[
+                  { key: 'riskRating', label: 'risk rating', getValue: (customer) => customer.riskRating },
+                  { key: 'branch', label: 'branch', getValue: (customer) => customer.branch },
+                ]}
+                loading={isLoadingData}
+                emptyText="No customers were returned by the backend."
+              >
+                {({ rows: pageCustomers, emptyMessage }) => (
+                  <table className="w-full text-left text-xs min-w-[700px]">
+                    <thead>
+                      <tr className={`border-b ${borderSubtle} ${textMuted}`}>
+                        <th className="pb-3">Customer ID</th>
+                        <th className="pb-3">Account Name</th>
+                        <th className="pb-3">Contact</th>
+                        <th className="pb-3">Credit Limit</th>
+                        <th className="pb-3">Total Outstanding</th>
+                        <th className="pb-3">Risk Rating</th>
+                        <th className="pb-3">Action</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className={`divide-y ${borderSubtle}`}>
+                      {pageCustomers.map((c) => {
+                        const out = enrichedInvoices
+                          .filter((i) => i.customerId === c.id)
+                          .reduce((s, i) => s + i.outstanding, 0);
+                        return (
+                          <tr key={c.id} className="hover:bg-[#E50914]/5">
+                            <td className="py-3 font-mono font-semibold">{c.id}</td>
+                            <td className="py-3 font-bold">{c.name}</td>
+                            <td className="py-3">
+                              <div>{c.contactPerson}</div>
+                              <div className={`text-[10px] ${textMuted}`}>{c.phone}</div>
+                            </td>
+                            <td className="py-3">{formatINR(c.creditLimit)}</td>
+                            <td className="py-3 font-bold text-[#E50914]">{formatINR(out)}</td>
+                            <td className="py-3">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  c.riskRating === 'Low'
+                                    ? 'bg-emerald-500/15 text-emerald-400'
+                                    : c.riskRating === 'Medium'
+                                    ? 'bg-amber-500/15 text-amber-400'
+                                    : 'bg-[#E50914]/15 text-[#E50914]'
+                                }`}
+                              >
+                                {c.riskRating}
+                              </span>
+                            </td>
+                            <td className="py-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedCustomerDrawer(c);
+                                  setIsCustomerDrawerOpen(true);
+                                }}
+                                className="px-3 py-1 rounded-lg bg-[#E50914] text-white text-[11px] font-semibold"
+                              >
+                                Open Profile
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!pageCustomers.length && (
+                        <tr><td colSpan="7" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                )}
+              </DataTableTools>
             </div>
           )}
 
@@ -4174,8 +4401,24 @@ secondaryColor={orgSettings.secondaryColor}
                 </div>
               )}
 
-              <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
-                <table className="w-full text-left text-xs min-w-[820px]">
+              <div className={`p-5 rounded-2xl border ${bgCard}`}>
+                <DataTableTools
+                  rows={enrichedInvoices}
+                  searchLabel="invoices"
+                  getSearchText={(invoice) => [
+                    invoice.invoiceNumber,
+                    invoice.id,
+                    invoice.customerName,
+                    invoice.derivedStatus,
+                  ].join(' ')}
+                  filters={[
+                    { key: 'status', label: 'status', getValue: (invoice) => invoice.derivedStatus },
+                  ]}
+                  loading={isLoadingData}
+                  emptyText="No invoices were returned by the backend."
+                >
+                  {({ rows: pageInvoices, emptyMessage }) => (
+                    <table className="w-full text-left text-xs min-w-[820px]">
                   <thead>
                     <tr className={`border-b ${borderSubtle} ${textMuted}`}>
                       <th className="pb-3">Invoice #</th>
@@ -4190,7 +4433,7 @@ secondaryColor={orgSettings.secondaryColor}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${borderSubtle}`}>
-                    {enrichedInvoices.map((inv) => (
+                    {pageInvoices.map((inv) => (
                       <tr key={inv.id}>
                        <td className="py-3 font-bold">{inv.invoiceNumber || inv.id}</td>
                         <td className="py-3">{inv.customerName}</td>
@@ -4222,9 +4465,11 @@ secondaryColor={orgSettings.secondaryColor}
                         </td>
                       </tr>
                     ))}
-                    {!enrichedInvoices.length && <tr><td colSpan="9" className={`py-5 text-center ${textMuted}`}>No invoices returned by the backend.</td></tr>}
+                    {!pageInvoices.length && <tr><td colSpan="9" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>}
                   </tbody>
-                </table>
+                    </table>
+                  )}
+                </DataTableTools>
               </div>
             </div>
           )}
@@ -4248,7 +4493,25 @@ secondaryColor={orgSettings.secondaryColor}
                 </button>
               </div>
 
-              <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+              <div className={`p-5 rounded-2xl border ${bgCard}`}>
+                <DataTableTools
+                  rows={receipts}
+                  searchLabel="payments and receipts"
+                  getSearchText={(receipt) => [
+                    receipt.receiptNumber,
+                    receipt.customerName,
+                    receipt.date,
+                    receipt.mode,
+                    receipt.reference,
+                  ].join(' ')}
+                  filters={[
+                    { key: 'status', label: 'status', getValue: (receipt) => receipt.status },
+                  ]}
+                  loading={isLoadingData}
+                  emptyText="No payment receipts were returned by the backend."
+                >
+                  {({ rows: pageReceipts, emptyMessage }) => (
+                    <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[850px]">
                   <thead>
                     <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4263,7 +4526,7 @@ secondaryColor={orgSettings.secondaryColor}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${borderSubtle}`}>
-                    {receipts.map((r) => (
+                    {pageReceipts.map((r) => (
                       <tr key={r.id}>
                         <td className="py-3 font-bold">{r.receiptNumber || r.id}</td>
                         <td className="py-3">{r.customerName}</td>
@@ -4320,8 +4583,89 @@ secondaryColor={orgSettings.secondaryColor}
                         </td>
                       </tr>
                     ))}
+                    {!pageReceipts.length && (
+                      <tr><td colSpan="8" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                    )}
                   </tbody>
                 </table>
+                    </div>
+                  )}
+                </DataTableTools>
+              </div>
+              <div className={`rounded-2xl border p-5 ${bgCard}`}>
+                <div>
+                  <h3 className="text-sm font-bold">Verified Subscription Receipts</h3>
+                  <p className={`mt-1 text-xs ${textMuted}`}>
+                    Receipts are issued only after provider-confirmed payment capture.
+                  </p>
+                </div>
+                <DataTableTools
+                  rows={verifiedSubscriptionReceipts}
+                  searchLabel="subscription receipts"
+                  getSearchText={(receipt) => [
+                    receipt.receiptNumber,
+                    receipt.customerName,
+                    receipt.customerEmail,
+                    receipt.transactionId,
+                    receipt.paymentMethod,
+                  ].join(' ')}
+                  filters={[
+                    { key: 'emailStatus', label: 'email status', getValue: (receipt) => receipt.emailStatus },
+                  ]}
+                  loading={isLoadingData}
+                  emptyText="No verified subscription receipts are available."
+                >
+                  {({ rows: pageSubscriptionReceipts, emptyMessage }) => (
+                    <div className="overflow-x-auto">
+                  <table className="w-full min-w-[700px] text-left text-xs">
+                    <thead>
+                      <tr className={`border-b ${borderSubtle} ${textMuted}`}>
+                        <th className="pb-2">Receipt #</th>
+                        <th className="pb-2">Customer</th>
+                        <th className="pb-2">Payment date</th>
+                        <th className="pb-2">Transaction ID</th>
+                        <th className="pb-2">Amount</th>
+                        <th className="pb-2">Email status</th>
+                        <th className="pb-2">Download</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`divide-y ${borderSubtle}`}>
+                      {pageSubscriptionReceipts.map((receipt) => (
+                        <tr key={receipt.id}>
+                          <td className="py-2 font-semibold">{receipt.receiptNumber}</td>
+                          <td className="py-2">{receipt.customerName}</td>
+                          <td className="py-2">{new Date(receipt.paidAt).toLocaleString()}</td>
+                          <td className="py-2">{receipt.transactionId || '—'}</td>
+                          <td className="py-2 font-bold">
+                            {formatDashboardCurrency(receipt.amount, receipt.currency)}
+                          </td>
+                          <td className="py-2">{receipt.emailStatus}</td>
+                          <td className="py-2">
+                            <button
+                              onClick={() => handleDownloadReceipt({
+                                ...receipt,
+                                recordType: 'subscription',
+                              })}
+                              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 font-semibold ${bgSurface}`}
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Download
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {!pageSubscriptionReceipts.length && (
+                        <tr>
+                          <td colSpan="7" className={`py-4 ${textMuted}`}>
+                            {emptyMessage}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                    </div>
+                  )}
+                </DataTableTools>
               </div>
             </div>
           )}
@@ -4356,7 +4700,25 @@ secondaryColor={orgSettings.secondaryColor}
                   </div>
                 ))}
               </div>
-              <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+              <div className={`p-5 rounded-2xl border ${bgCard}`}>
+                <DataTableTools
+                  rows={backendAgeing?.invoices || []}
+                  searchLabel="ageing report rows"
+                  getSearchText={(invoice) => [
+                    invoice.invoiceNumber,
+                    invoice.invoiceId,
+                    invoice.customerName,
+                    invoice.ageingCategory,
+                    invoice.dueDate,
+                  ].join(' ')}
+                  filters={[
+                    { key: 'bucket', label: 'ageing bucket', getValue: (invoice) => invoice.ageingCategory },
+                  ]}
+                  loading={isLoadingData}
+                  emptyText="No ageing rows are available for the selected date range."
+                >
+                  {({ rows: pageAgeingInvoices, emptyMessage }) => (
+                    <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[650px]">
                   <thead>
                     <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4369,8 +4731,7 @@ secondaryColor={orgSettings.secondaryColor}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${borderSubtle}`}>
-                    {(backendAgeing?.invoices || [])
-                      .map((inv) => (
+                    {pageAgeingInvoices.map((inv) => (
                         <tr key={inv.id}>
                         <td className="py-3 font-bold">{inv.invoiceNumber || inv.invoiceId}</td>
                           <td className="py-3">{inv.customerName}</td>
@@ -4383,20 +4744,43 @@ secondaryColor={orgSettings.secondaryColor}
                           </td>
                           <td className="py-3 font-extrabold">{formatDashboardCurrency(inv.outstandingAmount, inv.currency)}</td>
                         </tr>
-                      ))}
+                    ))}
+                    {!pageAgeingInvoices.length && (
+                      <tr><td colSpan="6" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                    )}
                   </tbody>
                 </table>
+                    </div>
+                  )}
+                </DataTableTools>
               </div>
             </div>
           )}
 
           {/* MODULE 7: COLLECTION PRIORITY & RISK QUEUE */}
           {activeModule === 'queue' && (
-            <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+            <div className={`p-5 rounded-2xl border ${bgCard}`}>
               <h2 className="text-lg font-bold mb-1">Weighted Collection Priority & Risk Queue</h2>
               <p className={`text-xs mb-4 ${textMuted}`}>
                 Ranked dynamically by overdue exposure, maximum invoice age, and broken Promise-to-Pay flags.
               </p>
+              <DataTableTools
+                rows={priorityQueue}
+                searchLabel="collection queue"
+                getSearchText={(customer) => [
+                  customer.name,
+                  customer.executive,
+                  customer.hasBrokenPtp ? 'Broken PTP' : 'Standard',
+                ].join(' ')}
+                filters={[
+                  { key: 'executive', label: 'assigned executive', getValue: (customer) => customer.executive },
+                  { key: 'ptp', label: 'PTP alert', getValue: (customer) => customer.hasBrokenPtp ? 'Broken PTP' : 'Standard' },
+                ]}
+                loading={isLoadingData}
+                emptyText="No collection accounts match the selected dashboard filters."
+              >
+                {({ rows: pagePriorityQueue, startIndex, emptyMessage }) => (
+                  <div className="overflow-x-auto">
               <table className="w-full text-left text-xs min-w-[700px]">
                 <thead>
                   <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4410,9 +4794,9 @@ secondaryColor={orgSettings.secondaryColor}
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${borderSubtle}`}>
-                  {priorityQueue.map((c, index) => (
+                  {pagePriorityQueue.map((c, index) => (
                     <tr key={c.id}>
-                      <td className="py-3 font-black text-[#E50914]">#{index + 1}</td>
+                      <td className="py-3 font-black text-[#E50914]">#{startIndex + index + 1}</td>
                       <td className="py-3 font-bold">{c.name}</td>
                       <td className="py-3">{c.executive}</td>
                       <td className="py-3 font-bold text-[#E50914]">{formatDashboardCurrency(c.overdueAmt, c.currency)}</td>
@@ -4447,20 +4831,46 @@ secondaryColor={orgSettings.secondaryColor}
                       </td>
                     </tr>
                   ))}
+                  {!pagePriorityQueue.length && (
+                    <tr><td colSpan="7" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                  )}
                 </tbody>
               </table>
+                  </div>
+                )}
+              </DataTableTools>
             </div>
           )}
 
           {/* MODULE 8: TASKS & FOLLOW-UPS */}
           {activeModule === 'tasks' && (
-            <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+            <div className={`p-5 rounded-2xl border ${bgCard}`}>
               <div className="flex items-center justify-between gap-3 mb-4">
                 <h2 className="text-lg font-bold">Collection Tasks & Call Follow-ups</h2>
                 <button onClick={() => setShowTaskForm(true)} className="px-3 py-2 rounded-lg bg-[#E50914] text-white text-xs font-bold">
                   Create Task
                 </button>
               </div>
+              <DataTableTools
+                rows={tasks}
+                searchLabel="tasks"
+                getSearchText={(task) => [
+                  task.id,
+                  task.customerName,
+                  task.title,
+                  task.dueDate,
+                  task.priority,
+                  task.status,
+                ].join(' ')}
+                filters={[
+                  { key: 'status', label: 'status', getValue: (task) => task.status },
+                  { key: 'priority', label: 'priority', getValue: (task) => task.priority },
+                ]}
+                loading={isLoadingData}
+                emptyText="No collection tasks were returned by the backend."
+              >
+                {({ rows: pageTasks, emptyMessage }) => (
+                  <div className="overflow-x-auto">
               <table className="w-full text-left text-xs min-w-[650px]">
                 <thead>
                   <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4474,7 +4884,7 @@ secondaryColor={orgSettings.secondaryColor}
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${borderSubtle}`}>
-                  {tasks.map((t) => (
+                  {pageTasks.map((t) => (
                     <tr key={t.id}>
                       <td className="py-3 font-mono">{t.id}</td>
                       <td className="py-3 font-bold">{t.customerName}</td>
@@ -4498,14 +4908,20 @@ secondaryColor={orgSettings.secondaryColor}
                       </td>
                     </tr>
                   ))}
+                  {!pageTasks.length && (
+                    <tr><td colSpan="7" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                  )}
                 </tbody>
               </table>
+                  </div>
+                )}
+              </DataTableTools>
             </div>
           )}
 
           {/* MODULE 9: PROMISE-TO-PAY (PTP) TRACKER */}
           {activeModule === 'promises' && (
-            <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+            <div className={`p-5 rounded-2xl border ${bgCard}`}>
               <div className="flex items-center justify-between gap-3 mb-1">
                 <h2 className="text-lg font-bold">Promise-to-Pay (PTP) Commitment Engine</h2>
                 <button onClick={() => setShowPromiseForm(true)} className="px-3 py-2 rounded-lg bg-[#E50914] text-white text-xs font-bold">
@@ -4515,6 +4931,25 @@ secondaryColor={orgSettings.secondaryColor}
               <p className={`text-xs mb-4 ${textMuted}`}>
                 Reconciles promises against posted receipt allocations to track outcomes.
               </p>
+              <DataTableTools
+                rows={enrichedPtps}
+                searchLabel="payment promises"
+                getSearchText={(promise) => [
+                  promise.id,
+                  promise.customerName,
+                  promise.invoiceId,
+                  promise.promisedDate,
+                  promise.status,
+                  promise.promisedAmount,
+                ].join(' ')}
+                filters={[
+                  { key: 'status', label: 'status', getValue: (promise) => promise.status },
+                ]}
+                loading={isLoadingData}
+                emptyText="No payment promises were returned by the backend."
+              >
+                {({ rows: pagePromises, emptyMessage }) => (
+                  <div className="overflow-x-auto">
               <table className="w-full text-left text-xs min-w-[700px]">
                 <thead>
                   <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4529,7 +4964,7 @@ secondaryColor={orgSettings.secondaryColor}
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${borderSubtle}`}>
-                  {enrichedPtps.map((p) => (
+                  {pagePromises.map((p) => (
                     <tr key={p.id}>
                       <td className="py-3 font-mono">{p.id}</td>
                       <td className="py-3 font-bold">{p.customerName}</td>
@@ -4560,15 +4995,21 @@ secondaryColor={orgSettings.secondaryColor}
                       </td>
                     </tr>
                   ))}
+                  {!pagePromises.length && (
+                    <tr><td colSpan="8" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                  )}
                 </tbody>
               </table>
+                  </div>
+                )}
+              </DataTableTools>
             </div>
           )}
 
           {/* MODULE 10: DISPUTES MANAGEMENT */}
           {activeModule === 'disputes' && (
             <div className="space-y-5">
-            <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+            <div className={`p-5 rounded-2xl border ${bgCard}`}>
               <div className="flex items-center justify-between gap-3 mb-1">
                 <h2 className="text-lg font-bold">Invoice Disputes</h2>
                 <button onClick={() => setShowDisputeForm(true)} className="px-3 py-2 rounded-lg bg-[#E50914] text-white text-xs font-bold">
@@ -4578,6 +5019,25 @@ secondaryColor={orgSettings.secondaryColor}
               <p className={`text-xs mb-4 ${textMuted}`}>
                 Review and resolve disputes through the backend workflow.
               </p>
+              <DataTableTools
+                rows={disputes}
+                searchLabel="invoice disputes"
+                getSearchText={(dispute) => [
+                  dispute.id,
+                  dispute.customerName,
+                  dispute.invoiceId,
+                  dispute.reason,
+                  dispute.category,
+                  dispute.status,
+                ].join(' ')}
+                filters={[
+                  { key: 'status', label: 'status', getValue: (dispute) => dispute.status },
+                ]}
+                loading={isLoadingData}
+                emptyText="No disputes were returned by the backend."
+              >
+                {({ rows: pageDisputes, emptyMessage }) => (
+                  <div className="overflow-x-auto">
               <table className="w-full text-left text-xs min-w-[680px]">
                 <thead>
                   <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4591,7 +5051,7 @@ secondaryColor={orgSettings.secondaryColor}
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${borderSubtle}`}>
-                  {disputes.map((d) => (
+                  {pageDisputes.map((d) => (
                     <tr key={d.id}>
                       <td className="py-3 font-mono">{d.id}</td>
                       <td className="py-3 font-bold">{d.customerName}</td>
@@ -4611,10 +5071,16 @@ secondaryColor={orgSettings.secondaryColor}
                       </td>
                     </tr>
                   ))}
+                  {!pageDisputes.length && (
+                    <tr><td colSpan="7" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                  )}
                 </tbody>
               </table>
+                  </div>
+                )}
+              </DataTableTools>
             </div>
-            <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+            <div className={`p-5 rounded-2xl border ${bgCard}`}>
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
                   <h3 className="text-base font-bold">Credit Adjustments</h3>
@@ -4624,12 +5090,31 @@ secondaryColor={orgSettings.secondaryColor}
                   Request Adjustment
                 </button>
               </div>
+              <DataTableTools
+                rows={creditNotes}
+                searchLabel="credit adjustments"
+                getSearchText={(adjustment) => [
+                  adjustment.adjustmentNumber,
+                  adjustment.invoiceNumber,
+                  adjustment.invoiceId,
+                  adjustment.reason,
+                  adjustment.status,
+                  adjustment.amount,
+                ].join(' ')}
+                filters={[
+                  { key: 'status', label: 'status', getValue: (adjustment) => adjustment.status },
+                ]}
+                loading={isLoadingData}
+                emptyText="No credit adjustments were returned by the backend."
+              >
+                {({ rows: pageAdjustments, emptyMessage }) => (
+                  <div className="overflow-x-auto">
               <table className="w-full min-w-[600px] text-left text-xs">
                 <thead><tr className={`border-b ${borderSubtle} ${textMuted}`}>
                   <th className="pb-3">Adjustment</th><th className="pb-3">Invoice</th><th className="pb-3">Reason</th><th className="pb-3">Amount</th><th className="pb-3">Status</th><th className="pb-3">Decision</th>
                 </tr></thead>
                 <tbody className={`divide-y ${borderSubtle}`}>
-                  {creditNotes.map((adjustment) => (
+                  {pageAdjustments.map((adjustment) => (
                     <tr key={adjustment.id}>
                       <td className="py-3 font-mono">{adjustment.adjustmentNumber || adjustment.id}</td>
                       <td className="py-3">{adjustment.invoiceNumber || adjustment.invoiceId}</td>
@@ -4646,8 +5131,14 @@ secondaryColor={orgSettings.secondaryColor}
                       </td>
                     </tr>
                   ))}
+                  {!pageAdjustments.length && (
+                    <tr><td colSpan="6" className={`py-5 text-center ${textMuted}`}>{emptyMessage}</td></tr>
+                  )}
                 </tbody>
               </table>
+                  </div>
+                )}
+              </DataTableTools>
             </div>
             </div>
           )}
@@ -4703,32 +5194,88 @@ secondaryColor={orgSettings.secondaryColor}
                 </div>
               </div>
 
-              <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+              <div className={`p-5 rounded-2xl border ${bgCard}`}>
                 <h3 className="text-sm font-bold mb-4">Scheduled Email Reminder History</h3>
+                <DataTableTools
+                  rows={reminders}
+                  searchLabel="email reminders"
+                  getSearchText={(reminder) => [
+                    reminder.customerName,
+                    reminder.invoiceId,
+                    reminder.channel,
+                    reminder.status,
+                    reminder.deliveryStatus,
+                    reminder.scheduledFor,
+                  ].join(' ')}
+                  filters={[
+                    { key: 'status', label: 'status', getValue: (reminder) => reminder.deliveryStatus || reminder.status },
+                  ]}
+                  loading={isLoadingData}
+                  emptyText="No reminders were recorded."
+                >
+                  {({ rows: pageReminders, emptyMessage }) => (
+                    <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[700px]">
                   <thead><tr className={`border-b ${borderSubtle} ${textMuted}`}>
                     <th className="pb-3">Scheduled</th><th className="pb-3">Customer</th><th className="pb-3">Invoice</th><th className="pb-3">Channel</th><th className="pb-3">Status</th><th className="pb-3">Action</th>
                   </tr></thead>
                   <tbody className={`divide-y ${borderSubtle}`}>
-                    {reminders.map((reminder) => (
+                    {pageReminders.map((reminder) => (
                       <tr key={reminder.id}>
-                        <td className="py-3">{formatReminderDateTimeIst(reminder.scheduledFor)}</td>
+                        <td className="py-3">{formatReminderDateTime(reminder.scheduledFor)}</td>
                         <td className="py-3">{reminder.customerName}</td>
                         <td className="py-3">{reminder.invoiceId || '-'}</td>
                         <td className="py-3">{reminder.channel}</td>
                         <td className={`py-3 ${reminder.deliveryStatus === 'Sent' ? 'text-emerald-400' : reminder.deliveryStatus === 'Failed' ? 'text-rose-400' : textMuted}`}>
-                          {reminder.deliveryStatus || reminder.status}
+                          <div>{reminder.deliveryStatus || reminder.status}</div>
+                          {reminder.deliveryStatus === 'Disabled' && reminder.lastError === 'DELIVERY_DISABLED' && (
+                            <div className="mt-1 max-w-[220px] text-[10px] leading-4 text-amber-400">
+                              Email delivery is disabled for this runtime.
+                            </div>
+                          )}
                         </td>
                         <td className="py-3">
-                          {reminder.status === 'Pending' && (
-                            <button onClick={() => handleReminderStatus(reminder, 'CANCELLED')} className="px-2 py-1 rounded border text-rose-400">Cancel</button>
-                          )}
+                          <div className="flex flex-wrap gap-2">
+                            {canSendReminderNow(reminder, currentRole) && (
+                              <button
+                                onClick={() => handlePreviewReminderEmail(reminder)}
+                                disabled={loadingReminderPreviewId === reminder.id || sendingReminderId === reminder.id}
+                                aria-label={`Preview and send reminder for ${reminder.customerName}`}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-sky-500/40 text-sky-400 hover:bg-sky-500/10 font-semibold disabled:opacity-50"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                {loadingReminderPreviewId === reminder.id ? 'Preparing…' : 'Send Now'}
+                              </button>
+                            )}
+                            {canCancelReminder(reminder) && (
+                              <button
+                                onClick={() => handleReminderStatus(reminder, 'CANCELLED')}
+                                className="px-2.5 py-1 rounded-lg border border-amber-500/40 text-amber-500 hover:bg-amber-500/10 font-semibold"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            {canDeleteReminder(reminder, currentRole) && (
+                              <button
+                                onClick={() => setReminderToDelete(reminder)}
+                                disabled={deletingReminderId === reminder.id}
+                                aria-label={`Delete reminder for ${reminder.customerName}`}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 font-semibold disabled:opacity-50"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
-                    {!reminders.length && <tr><td colSpan="6" className={`py-4 ${textMuted}`}>No reminders recorded.</td></tr>}
+                    {!pageReminders.length && <tr><td colSpan="6" className={`py-4 ${textMuted}`}>{emptyMessage}</td></tr>}
                   </tbody>
                 </table>
+                    </div>
+                  )}
+                </DataTableTools>
               </div>
 
               {reminderTemplates.length > 0 && (
@@ -4759,8 +5306,28 @@ secondaryColor={orgSettings.secondaryColor}
                 </div>
               )}
 
-              <div className={`p-5 rounded-2xl border overflow-x-auto ${bgCard}`}>
+              <div className={`p-5 rounded-2xl border ${bgCard}`}>
                 <h3 className="text-sm font-bold mb-4">Recorded Interaction Log</h3>
+                <DataTableTools
+                  rows={commLogs}
+                  searchLabel="recorded interactions"
+                  getSearchText={(log) => [
+                    log.customer,
+                    log.channel,
+                    log.trigger,
+                    log.status,
+                    log.message,
+                    log.timestamp,
+                  ].join(' ')}
+                  filters={[
+                    { key: 'channel', label: 'channel', getValue: (log) => log.channel },
+                    { key: 'status', label: 'status', getValue: (log) => log.status },
+                  ]}
+                  loading={isLoadingData}
+                  emptyText="No communication records were returned by the backend."
+                >
+                  {({ rows: pageCommunicationLogs, emptyMessage }) => (
+                    <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[750px]">
                   <thead>
                     <tr className={`border-b ${borderSubtle} ${textMuted}`}>
@@ -4773,7 +5340,7 @@ secondaryColor={orgSettings.secondaryColor}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${borderSubtle}`}>
-                    {commLogs.map((log) => (
+                    {pageCommunicationLogs.map((log) => (
                       <tr key={log.id}>
                         <td className={`py-3 ${textMuted}`}>{log.timestamp ? new Date(log.timestamp).toLocaleString() : '-'}</td>
                         <td className="py-3 font-bold">{log.customer}</td>
@@ -4789,7 +5356,12 @@ secondaryColor={orgSettings.secondaryColor}
                     ))}
                   </tbody>
                 </table>
-                {!commLogs.length && <p className={`pt-4 text-xs ${textMuted}`}>No communication records.</p>}
+                    {!pageCommunicationLogs.length && (
+                      <p className={`pt-4 text-xs ${textMuted}`}>{emptyMessage}</p>
+                    )}
+                    </div>
+                  )}
+                </DataTableTools>
               </div>
             </div>
           )}
@@ -4842,44 +5414,111 @@ secondaryColor={orgSettings.secondaryColor}
               </div>
 
               {statementData ? (
-                  <div className={`p-6 rounded-2xl border space-y-4 ${bgCard}`}>
-                    <div className="flex justify-between items-start border-b pb-4 border-gray-800/30">
-                      <div>
-                        <span className="text-xs font-black text-[#E50914]">STATEMENT OF ACCOUNT</span>
-                        <h3 className="text-xl font-bold mt-1">{statementData.customer.name}</h3>
-                        <p className={`text-xs ${textMuted}`}>{statementData.customer.email} · {new Date(statementData.period.fromDate).toLocaleDateString()} – {new Date(statementData.period.toDate).toLocaleDateString()}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-xs ${textMuted}`}>Closing Balance Due</p>
-                        <p className="text-2xl font-extrabold text-[#E50914]">{formatINR(statementData.summary.closingOutstanding)}</p>
-                      </div>
+                <div className={`p-6 rounded-2xl border space-y-5 ${bgCard}`}>
+                  <div className="flex flex-wrap justify-between items-start gap-3 border-b pb-4 border-gray-800/30">
+                    <div>
+                      <span className="text-xs font-black text-[#E50914]">STATEMENT OF ACCOUNT</span>
+                      <h3 className="text-xl font-bold mt-1">{statementData.customer.name}</h3>
+                      <p className={`text-xs ${textMuted}`}>{statementData.customer.email} · {new Date(statementData.period.fromDate).toLocaleDateString()} – {new Date(statementData.period.toDate).toLocaleDateString()}</p>
                     </div>
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className={`border-b ${borderSubtle} ${textMuted}`}>
-                          <th className="pb-2">Date</th>
-                          <th className="pb-2">Document #</th>
-                          <th className="pb-2">Debit</th>
-                          <th className="pb-2">Credit</th>
-                          <th className="pb-2">Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody className={`divide-y ${borderSubtle}`}>
-                        {statementData.transactions.map((transaction, index) => (
-                          <tr key={`${transaction.reference}-${index}`}>
-                            <td className="py-2.5">{new Date(transaction.date).toLocaleDateString()}</td>
-                            <td className="py-2.5 font-bold">{transaction.reference} · {transaction.description}</td>
-                            <td className="py-2.5">{formatINR(transaction.debit)}</td>
-                            <td className="py-2.5 text-emerald-400">
-                              {formatINR(transaction.credit)}
-                            </td>
-                            <td className="py-2.5 font-bold">{formatINR(transaction.balance)}</td>
-                          </tr>
-                        ))}
-                        {!statementData.transactions.length && <tr><td colSpan="5" className={`py-4 ${textMuted}`}>No transactions in this period.</td></tr>}
-                      </tbody>
-                    </table>
+                    <p className={`text-xs ${textMuted}`}>Balances are shown separately by currency.</p>
                   </div>
+                  {statementCurrencyEntries.length ? (
+                    statementCurrencyEntries.map(([currency, summary]) => {
+                      const currencyTransactions = statementData.transactions.filter(
+                        (transaction) => transaction.currency === currency,
+                      );
+
+                      return (
+                        <section key={currency} className={`rounded-xl border p-4 space-y-4 ${borderSubtle}`}>
+                          <div className="flex flex-wrap justify-between items-start gap-3">
+                            <div>
+                              <h4 className="text-sm font-bold">{currency} Statement</h4>
+                              <p className={`text-xs ${textMuted}`}>
+                                Opening balance: {formatDashboardCurrency(summary.openingBalance, currency)}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className={`text-xs ${textMuted}`}>Closing Balance Due</p>
+                              <p className="text-xl font-extrabold text-[#E50914]">
+                                {formatDashboardCurrency(summary.closingOutstanding, currency)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                            {[
+                              ["Invoices", summary.totalInvoices],
+                              ["Receipts", summary.totalReceipts],
+                              ["Credit adjustments", summary.adjustments],
+                            ].map(([label, amount]) => (
+                              <div key={label} className={`rounded-lg border p-3 ${borderSubtle}`}>
+                                <p className={`text-xs ${textMuted}`}>{label}</p>
+                                <p className="mt-1 text-sm font-bold">
+                                  {formatDashboardCurrency(amount, currency)}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                          <DataTableTools
+                            rows={currencyTransactions}
+                            searchLabel={`${currency} statement transactions`}
+                            getSearchText={(transaction) => [
+                              transaction.reference,
+                              transaction.description,
+                              transaction.date,
+                              transaction.debit,
+                              transaction.credit,
+                            ].join(' ')}
+                            loading={isLoadingData}
+                            emptyText="No transactions in this currency during the selected period."
+                          >
+                            {({ rows: pageCurrencyTransactions, emptyMessage }) => (
+                              <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead>
+                              <tr className={`border-b ${borderSubtle} ${textMuted}`}>
+                                <th className="pb-2">Date</th>
+                                <th className="pb-2">Document #</th>
+                                <th className="pb-2">Debit</th>
+                                <th className="pb-2">Credit</th>
+                                <th className="pb-2">Balance</th>
+                              </tr>
+                            </thead>
+                            <tbody className={`divide-y ${borderSubtle}`}>
+                              {pageCurrencyTransactions.map((transaction, index) => (
+                                <tr key={`${transaction.currency}-${transaction.reference}-${index}`}>
+                                  <td className="py-2.5">{new Date(transaction.date).toLocaleDateString()}</td>
+                                  <td className="py-2.5 font-bold">{transaction.reference} · {transaction.description}</td>
+                                  <td className="py-2.5">{formatDashboardCurrency(transaction.debit, transaction.currency)}</td>
+                                  <td className="py-2.5 text-emerald-400">
+                                    {formatDashboardCurrency(transaction.credit, transaction.currency)}
+                                  </td>
+                                  <td className="py-2.5 font-bold">
+                                    {formatDashboardCurrency(transaction.balance, transaction.currency)}
+                                  </td>
+                                </tr>
+                              ))}
+                              {!pageCurrencyTransactions.length && (
+                                <tr>
+                                  <td colSpan="5" className={`py-4 ${textMuted}`}>
+                                    {emptyMessage}
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                              </div>
+                            )}
+                          </DataTableTools>
+                        </section>
+                      );
+                    })
+                  ) : (
+                    <p className={`py-4 text-xs ${textMuted}`}>
+                      No balances or transactions in this statement period.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <p className={`rounded-2xl border p-5 text-xs ${textMuted} ${bgCard}`}>Choose a customer and date range, then generate the backend statement.</p>
               )}
@@ -4922,21 +5561,32 @@ secondaryColor={orgSettings.secondaryColor}
                   <div className={`text-xs ${textMuted}`}>
                     {reportData.count} records{reportData.total !== undefined ? ` · Total ${formatINR(reportData.total)}` : ''}
                   </div>
-                  <div className="overflow-x-auto">
+                  <DataTableTools
+                    rows={reportData.rows}
+                    searchLabel="report results"
+                    getSearchText={(row) => Object.values(row)
+                      .map((value) => typeof value === 'object' ? JSON.stringify(value) : String(value ?? ''))
+                      .join(' ')}
+                    emptyText="No report rows were returned by the backend."
+                  >
+                    {({ rows: pageReportRows, emptyMessage }) => (
+                      <div className="overflow-x-auto">
                     <table className="w-full min-w-[600px] text-left text-xs">
                       <thead><tr className={`border-b ${borderSubtle} ${textMuted}`}>
                         {(reportData.rows[0] ? Object.keys(reportData.rows[0]) : []).map((key) => <th key={key} className="pb-3 pr-4">{key}</th>)}
                       </tr></thead>
                       <tbody className={`divide-y ${borderSubtle}`}>
-                        {reportData.rows.map((row, rowIndex) => (
+                        {pageReportRows.map((row, rowIndex) => (
                           <tr key={rowIndex}>
                             {Object.values(row).map((value, valueIndex) => <td key={valueIndex} className="py-3 pr-4">{value == null ? '-' : typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>)}
                           </tr>
                         ))}
-                        {!reportData.rows.length && <tr><td className={`py-4 ${textMuted}`} colSpan="6">No report rows returned.</td></tr>}
+                        {!pageReportRows.length && <tr><td className={`py-4 ${textMuted}`} colSpan="6">{emptyMessage}</td></tr>}
                       </tbody>
                     </table>
-                  </div>
+                      </div>
+                    )}
+                  </DataTableTools>
                 </div>
               )}
             </div>
@@ -4960,13 +5610,22 @@ secondaryColor={orgSettings.secondaryColor}
                 <h3 className="text-3xl font-extrabold mt-2">{currentSubscription?.plan?.name || 'No plan assigned'}</h3>
                 <p className={'text-sm mt-2 ' + textMuted}>
                   {currentSubscription
-                    ? `${currentSubscription.billingCycle.toLowerCase()} billing${currentSubscription.billingAmount != null ? ` · ${currentSubscription.currency} ${Number(currentSubscription.billingAmount).toFixed(2)}` : ''}`
-                    : 'A plan becomes available only after management approves pricing and limits.'}
+                    ? `${typeof currentSubscription.billingCycle === 'string' ? `${currentSubscription.billingCycle.toLowerCase()} billing` : 'Billing cycle unavailable'}${currentSubscription.billingAmount != null && Number.isFinite(Number(currentSubscription.billingAmount)) ? ` · ${currentSubscription.currency || 'INR'} ${Number(currentSubscription.billingAmount).toFixed(2)}` : ''}`
+                    : 'No active organization subscription. Use Subscription Plans to review available plans.'}
                 </p>
                 {currentSubscription?.endsAt && (
                   <p className={'text-sm mt-2 ' + textMuted}>
                     Expires / renews: {new Date(currentSubscription.endsAt).toLocaleDateString()}
                   </p>
+                )}
+                {canAccessOrganizationBillingPortal(currentRole) && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveModule('organization-plans')}
+                    className="mt-4 rounded-xl bg-[#E50914] px-4 py-2.5 text-xs font-bold text-white"
+                  >
+                    View subscription plans
+                  </button>
                 )}
               </div>
 
@@ -4995,71 +5654,18 @@ secondaryColor={orgSettings.secondaryColor}
                 </div>
               </div>
 
-              <div>
-                <div className="mb-4 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-bold">Available Plans</h3>
-                    <p className={'text-xs mt-1 ' + textMuted}>Plan changes are charged in Test Mode and take effect at the next renewal without proration.</p>
-                  </div>
-                  <label className={'text-xs font-semibold ' + textMuted}>
-                    Billing cycle
-                    <select
-                      value={subscriptionBillingCycle}
-                      onChange={(event) => setSubscriptionBillingCycle(event.target.value)}
-                      className={`block mt-1 rounded-lg border p-2 text-sm ${bgSurface}`}
-                    >
-                      <option value="MONTHLY">Monthly</option>
-                      <option value="YEARLY">Annual</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                  {subscriptionPlans.map((plan) => {
-                    const selectedPrice = subscriptionBillingCycle === 'YEARLY' ? plan.yearlyPrice : plan.monthlyPrice;
-                    const isCurrent = currentSubscription?.plan?.code === plan.code;
-                    const users = plan.maxUsers == null ? 'Unlimited users' : `${plan.maxUsers} users`;
-                    const customersLimit = plan.maxCustomers == null ? 'Unlimited customers' : `${plan.maxCustomers} customers`;
-                    const invoicesLimit = plan.maxInvoicesPerMonth == null ? 'Unlimited invoices/month' : `${plan.maxInvoicesPerMonth} invoices/month`;
-                    return (
-                      <div key={plan.id || plan.code} className={'rounded-2xl border p-5 flex flex-col ' + (isCurrent ? 'border-[#E50914] ring-1 ring-[#E50914]' : 'border-gray-500/20') + ' ' + bgCard}>
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-extrabold uppercase tracking-wider text-[#E50914]">{plan.name}</span>
-                          {isCurrent && <span className="text-[9px] px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-500 font-bold">CURRENT PLAN</span>}
-                        </div>
-                        <h4 className="text-xl font-extrabold mt-4">
-                          {selectedPrice == null ? 'Not priced for this cycle' : `${formatINR(selectedPrice)} / ${subscriptionBillingCycle === 'YEARLY' ? 'year' : 'month'}`}
-                        </h4>
-                        <p className={'text-xs mt-3 ' + textMuted}>{users}</p>
-                        <p className={'text-xs mt-2 ' + textMuted}>{customersLimit}</p>
-                        <p className={'text-xs mt-2 ' + textMuted}>{invoicesLimit}</p>
-                        {plan.description && <p className={'text-xs mt-4 ' + textMuted}>{plan.description}</p>}
-                        <button
-                          onClick={() => handleSubscriptionCheckout(plan)}
-                          disabled={isProcessingBilling || isCurrent || selectedPrice == null}
-                          className="mt-auto pt-5 w-full disabled:opacity-50"
-                        >
-                          <span className="block rounded-xl bg-[#E50914] px-3 py-3 text-xs font-bold text-white">
-                            {isCurrent ? 'Current Plan' : isProcessingBilling ? 'Preparing checkout…' : 'Continue with Test Mode'}
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {!subscriptionPlans.length && (
-                    <p className={'text-xs ' + textMuted}>No plans are currently purchasable. Pricing and limits require management approval.</p>
-                  )}
-                </div>
-              </div>
-
               {currentRole === 'SUPER_ADMIN' && (
                 <section className={'rounded-2xl border p-5 space-y-4 ' + bgCard}>
                   <div>
                     <h3 className="text-lg font-bold">Management Plan Configuration</h3>
-                    <p className={'text-xs mt-1 ' + textMuted}>Proposed pricing and caps remain non-purchasable until separately approved. Empty caps are explicitly treated as unlimited only when approved.</p>
+                    <p className={'text-xs mt-1 ' + textMuted}>Official Starter, Growth and Business monthly prices are fixed in the backend catalog and do not require pricing approval. Optional limit proposals remain subject to approval; blank limits are treated as unlimited only after approval.</p>
                   </div>
                   <div className="space-y-4">
                     {subscriptionPlanConfigs.map((plan) => {
                       const draft = planConfigDrafts[plan.code] || {};
+                      const isBuiltInPlan = OFFICIAL_SAAS_PLANS.some(
+                        (officialPlan) => officialPlan.code === plan.code
+                      );
                       const updateDraft = (field, value) => setPlanConfigDrafts((existing) => ({
                         ...existing,
                         [plan.code]: { ...(existing[plan.code] || {}), [field]: value },
@@ -5076,7 +5682,10 @@ secondaryColor={orgSettings.secondaryColor}
                           <div className="flex flex-col sm:flex-row sm:justify-between gap-2">
                             <h4 className="font-bold">{plan.name}</h4>
                             <p className={'text-xs ' + textMuted}>
-                              Active pricing: {plan.pricingStatus} · Proposed pricing: {plan.pricingProposalStatus} · Active limits: {plan.limitsStatus} · Proposed limits: {plan.limitsProposalStatus} · {plan.isActive ? 'Purchasable' : 'Not purchasable'}
+                              {isBuiltInPlan
+                                ? 'Official built-in plan · pricing approval is not required'
+                                : `Active pricing: ${plan.pricingStatus} · Proposed pricing: ${plan.pricingProposalStatus} · ${plan.isActive ? 'Purchasable' : 'Not purchasable'}`}
+                              {` · Active limits: ${plan.limitsStatus} · Proposed limits: ${plan.limitsProposalStatus}`}
                             </p>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mt-4">
@@ -5106,23 +5715,38 @@ secondaryColor={orgSettings.secondaryColor}
                 </section>
               )}
 
-              <OrganizationCustomerPlanManager
-                token={authToken}
-                role={currentRole}
-                active={activeModule === 'billing'}
-                bgCard={bgCard}
-                bgSurface={bgSurface}
-                textMuted={textMuted}
-              />
+              <Suspense fallback={<div className={`rounded-2xl border p-5 text-xs ${bgCard} ${textMuted}`} role="status">Loading customer plans…</div>}>
+                <OrganizationCustomerPlanManager
+                  token={authToken}
+                  role={currentRole}
+                  active={activeModule === 'billing'}
+                  bgCard={bgCard}
+                  bgSurface={bgSurface}
+                  textMuted={textMuted}
+                />
+              </Suspense>
 
               <div className={'rounded-2xl border p-5 ' + bgCard}>
                 <h3 className="text-lg font-bold">Billing History</h3>
-                {billingHistory.length ? (
-                  <div className="mt-3 overflow-x-auto">
+                <DataTableTools
+                  rows={billingHistory}
+                  searchLabel="billing history"
+                  getSearchText={(invoice) => [
+                    invoice.invoiceNumber,
+                    invoice.planName,
+                    invoice.billingCycle,
+                    invoice.periodStart,
+                    invoice.periodEnd,
+                  ].join(' ')}
+                  loading={isLoadingData}
+                  emptyText="No subscription invoices yet."
+                >
+                  {({ rows: pageBillingHistory, emptyMessage }) => (
+                    <div className="mt-3 overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead><tr className={textMuted}><th className="p-2">Invoice</th><th className="p-2">Plan</th><th className="p-2">Period</th><th className="p-2">Amount</th><th className="p-2">Document</th></tr></thead>
                       <tbody>
-                        {billingHistory.map((invoice) => (
+                        {pageBillingHistory.map((invoice) => (
                           <tr key={invoice.id} className="border-t border-gray-500/20">
                             <td className="p-2">{invoice.invoiceNumber}</td>
                             <td className="p-2">{invoice.planName} ({invoice.billingCycle.toLowerCase()})</td>
@@ -5138,12 +5762,42 @@ secondaryColor={orgSettings.secondaryColor}
                             </td>
                           </tr>
                         ))}
+                        {!pageBillingHistory.length && (
+                          <tr><td className={`p-4 ${textMuted}`} colSpan="5">{emptyMessage}</td></tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
-                ) : <p className={'text-xs mt-2 ' + textMuted}>No subscription invoices yet.</p>}
+                  )}
+                </DataTableTools>
               </div>
             </div>
+          )}
+
+          {activeModule === 'organization-plans' && (
+            <Suspense
+              fallback={
+                <div className={`rounded-2xl border p-5 text-xs ${bgCard} ${textMuted}`} role="status">
+                  Loading organization subscription plans…
+                </div>
+              }
+            >
+              <OrganizationSubscriptionPlans
+                role={currentRole}
+                plans={availableSubscriptionPlans}
+                billingConfiguration={razorpayBillingConfiguration}
+                currentSubscription={currentSubscription}
+                billingCycle={activeSubscriptionBillingCycle}
+                onBillingCycleChange={setSubscriptionBillingCycle}
+                isProcessing={isProcessingBilling}
+                isLoading={isLoadingData}
+                onCheckout={handleSubscriptionCheckout}
+                onContactSales={() => showToast('Contact Alpha Auron to discuss Enterprise pricing.')}
+                bgCard={bgCard}
+                bgSurface={bgSurface}
+                textMuted={textMuted}
+              />
+            </Suspense>
           )}
           </div>
         </main>
@@ -5174,6 +5828,156 @@ secondaryColor={orgSettings.secondaryColor}
             </div>
             <button type="submit" className="w-full rounded-lg bg-[#E50914] py-2.5 text-xs font-bold text-white">Save Task</button>
           </form>
+      </AnimatedOverlay>
+
+      <AnimatedOverlay
+        open={Boolean(reminderToSend)}
+        className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4"
+      >
+        {reminderToSend && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="send-reminder-title"
+            className={`w-full max-w-xl rounded-2xl border p-6 shadow-2xl ${bgCard}`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="rounded-xl bg-sky-500/10 p-2 text-sky-400">
+                  <Send className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 id="send-reminder-title" className="text-base font-bold">Preview reminder email</h3>
+                  <p className={`mt-1 text-xs ${textMuted}`}>
+                    Review the verified recipient and email content before sending.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close reminder email preview"
+                disabled={sendingReminderId === reminderToSend.id}
+                onClick={() => {
+                  setReminderToSend(null);
+                  setReminderEmailPreview(null);
+                }}
+                className="rounded-lg p-1 text-slate-400 hover:bg-white/5 disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {loadingReminderPreviewId === reminderToSend.id ? (
+              <p className={`mt-5 rounded-xl border p-4 text-sm ${bgSurface} ${textMuted}`}>
+                Preparing the current reminder email preview…
+              </p>
+            ) : reminderEmailPreview ? (
+              <div className="mt-5 space-y-3">
+                <div>
+                  <label className={`mb-1 block text-[10px] font-bold uppercase tracking-wider ${textMuted}`} htmlFor="reminder-preview-recipient">Recipient</label>
+                  <div id="reminder-preview-recipient" className={`rounded-lg border p-3 text-xs ${bgSurface}`}>
+                    {reminderEmailPreview.recipient}
+                  </div>
+                </div>
+                <div>
+                  <label className={`mb-1 block text-[10px] font-bold uppercase tracking-wider ${textMuted}`} htmlFor="reminder-preview-subject">Subject</label>
+                  <div id="reminder-preview-subject" className={`rounded-lg border p-3 text-xs ${bgSurface}`}>
+                    {reminderEmailPreview.subject}
+                  </div>
+                </div>
+                <div>
+                  <label className={`mb-1 block text-[10px] font-bold uppercase tracking-wider ${textMuted}`} htmlFor="reminder-preview-message">Message</label>
+                  <pre id="reminder-preview-message" className={`max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg border p-3 font-sans text-xs ${bgSurface}`}>
+                    {reminderEmailPreview.message}
+                  </pre>
+                </div>
+                <p className={`rounded-xl border p-3 text-xs ${bgSurface} ${textMuted}`}>
+                  Confirming sends this email immediately to the verified portal address above.
+                </p>
+              </div>
+            ) : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={sendingReminderId === reminderToSend.id}
+                onClick={() => {
+                  setReminderToSend(null);
+                  setReminderEmailPreview(null);
+                }}
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${bgSurface}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!reminderEmailPreview || loadingReminderPreviewId === reminderToSend.id || sendingReminderId === reminderToSend.id}
+                onClick={handleSendReminderNow}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-bold text-white hover:bg-sky-800 disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {sendingReminderId === reminderToSend.id ? 'Sending…' : 'Confirm & Send'}
+              </button>
+            </div>
+          </div>
+        )}
+      </AnimatedOverlay>
+
+      <AnimatedOverlay
+        open={Boolean(reminderToDelete)}
+        className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4"
+      >
+        {reminderToDelete && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-reminder-title"
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${bgCard}`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="rounded-xl bg-rose-500/10 p-2 text-rose-400">
+                  <AlertTriangle className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 id="delete-reminder-title" className="text-base font-bold">Delete email reminder?</h3>
+                  <p className={`mt-1 text-xs ${textMuted}`}>
+                    This will permanently remove the reminder for {reminderToDelete.customerName || 'this customer'}.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close delete reminder confirmation"
+                disabled={deletingReminderId === reminderToDelete.id}
+                onClick={() => setReminderToDelete(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-white/5 disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className={`mt-4 rounded-xl border p-3 text-xs ${bgSurface} ${textMuted}`}>
+              Sent reminders are retained for audit history. Customer, invoice, payment, and receipt records will not be deleted.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={deletingReminderId === reminderToDelete.id}
+                onClick={() => setReminderToDelete(null)}
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${bgSurface}`}
+              >
+                Keep Reminder
+              </button>
+              <button
+                type="button"
+                disabled={deletingReminderId === reminderToDelete.id}
+                onClick={handleDeleteReminder}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {deletingReminderId === reminderToDelete.id ? 'Deleting…' : 'Delete Reminder'}
+              </button>
+            </div>
+          </div>
+        )}
       </AnimatedOverlay>
 
       <AnimatedOverlay

@@ -1,4 +1,4 @@
-const IST_OFFSET_MINUTES = 5 * 60 + 30;
+const DEFAULT_TIME_ZONE = "Asia/Kolkata";
 const DATE_TIME_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?$/i;
 
@@ -30,7 +30,85 @@ const isValidDateTimeParts = (year, month, day, hour, minute, second) => {
   );
 };
 
-export const parseReminderScheduleTime = (value) => {
+export const isValidIanaTimeZone = (timeZone) => {
+  if (typeof timeZone !== "string" || !timeZone.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const getZonedParts = (date, timeZone) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+
+  return Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map(({ type, value }) => [type, Number(value)])
+  );
+};
+
+export const localDateTimeToUtc = (parts, timeZone = DEFAULT_TIME_ZONE) => {
+  if (
+    !isValidIanaTimeZone(timeZone) ||
+    !isValidDateTimeParts(
+      parts.year,
+      parts.month,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second || 0
+    )
+  ) {
+    return null;
+  }
+
+  const milliseconds = Number(parts.millisecond || 0);
+  const targetWallTime = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second || 0,
+    milliseconds
+  );
+  let timestamp = targetWallTime;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const observed = getZonedParts(new Date(timestamp), timeZone);
+    const observedWallTime = Date.UTC(
+      observed.year,
+      observed.month - 1,
+      observed.day,
+      observed.hour,
+      observed.minute,
+      observed.second,
+      milliseconds
+    );
+    const adjustment = targetWallTime - observedWallTime;
+    if (adjustment === 0) return new Date(timestamp);
+    timestamp += adjustment;
+  }
+
+  return null;
+};
+
+export const parseReminderScheduleTime = (
+  value,
+  timeZone = DEFAULT_TIME_ZONE
+) => {
   if (typeof value !== "string") return null;
 
   const match = DATE_TIME_PATTERN.exec(value);
@@ -77,17 +155,18 @@ export const parseReminderScheduleTime = (value) => {
     return Number.isFinite(timestamp) ? new Date(timestamp) : null;
   }
 
-  const localWallTimeAsUtc = new Date(0);
-  localWallTimeAsUtc.setUTCFullYear(year, month - 1, day);
-  localWallTimeAsUtc.setUTCHours(hour, minute, second, milliseconds);
-
-  return new Date(
-    localWallTimeAsUtc.getTime() - IST_OFFSET_MINUTES * 60_000
+  return localDateTimeToUtc(
+    { year, month, day, hour, minute, second, millisecond: milliseconds },
+    timeZone
   );
 };
 
-export const validateReminderScheduleTime = (value, now = new Date()) => {
-  const scheduledFor = parseReminderScheduleTime(value);
+export const validateReminderScheduleTime = (
+  value,
+  now = new Date(),
+  timeZone = DEFAULT_TIME_ZONE
+) => {
+  const scheduledFor = parseReminderScheduleTime(value, timeZone);
   if (!scheduledFor) return { error: "INVALID_DATE" };
 
   if (scheduledFor.getTime() <= now.getTime()) {

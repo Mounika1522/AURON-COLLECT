@@ -7,9 +7,11 @@ import prisma from "../config/prisma.js";
 import jwt from "jsonwebtoken";
 import { Prisma } from "@prisma/client";
 import {
-  drawBrandedPdfPageHeader,
-  loadBrandedPdfLogo
-} from "../services/branded-pdf.service.js";
+  buildCustomerReceiptPdf,
+  getCustomerReceiptPdfFilename
+} from "../services/customer-receipt-pdf.service.js";
+import { isValidIanaTimeZone } from "../services/reminder-time.service.js";
+import { syncInvoiceReminders } from "../services/reminder.service.js";
 
 const excludedInvoiceStatuses = ["DRAFT", "CANCELLED", "WRITTEN_OFF"];
 const logoPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../public/auron-logo.png");
@@ -97,6 +99,7 @@ export const getCustomerProfile = async (req, res) => {
         fullName: true,
         email: true,
         emailVerifiedAt: true,
+        timeZone: true,
         createdAt: true,
         customer: {
           select: {
@@ -132,27 +135,85 @@ export const getCustomerProfile = async (req, res) => {
 
 export const updateCustomerProfile = async (req, res) => {
   try {
-    const fullName = req.body?.fullName;
+    const { fullName, timeZone } = req.body || {};
+    const hasFullName = fullName !== undefined;
+    const hasTimeZone = timeZone !== undefined;
+    if (!hasFullName && !hasTimeZone) {
+      return res.status(400).json({
+        success: false,
+        message: "Provide a profile name or a valid time zone."
+      });
+    }
+
     if (
-      typeof fullName !== "string" ||
-      !fullName.trim() ||
-      fullName.trim().length > 120
+      hasFullName &&
+      (
+        typeof fullName !== "string" ||
+        !fullName.trim() ||
+        fullName.trim().length > 120
+      )
     ) {
       return res.status(400).json({
         success: false,
         message: "Enter a name of up to 120 characters."
       });
     }
+    if (hasTimeZone && !isValidIanaTimeZone(timeZone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid IANA time zone, such as Asia/Kolkata."
+      });
+    }
 
-    const updated = await prisma.customerPortalAccount.updateMany({
-      where: {
-        id: req.customer.accountId,
-        customerId: req.customer.customerId,
-        customer: { organisationId: req.customer.organisationId }
-      },
-      data: { fullName: fullName.trim() }
+    const data = {
+      ...(hasFullName ? { fullName: fullName.trim() } : {}),
+      ...(hasTimeZone ? { timeZone: timeZone.trim() } : {})
+    };
+    const updatedCount = await prisma.$transaction(async (tx) => {
+      const updated = await tx.customerPortalAccount.updateMany({
+        where: {
+          id: req.customer.accountId,
+          customerId: req.customer.customerId,
+          customer: { organisationId: req.customer.organisationId }
+        },
+        data
+      });
+      if (updated.count !== 1) return updated.count;
+
+      if (hasTimeZone) {
+        await tx.reminder.updateMany({
+          where: {
+            customerId: req.customer.customerId,
+            organisationId: req.customer.organisationId,
+            status: "PENDING",
+            deliveryStatus: "WAITING_FOR_VERIFIED_EMAIL"
+          },
+          data: { nextAttemptAt: new Date() }
+        });
+        const invoices = await tx.invoice.findMany({
+          where: {
+            customerId: req.customer.customerId,
+            organisationId: req.customer.organisationId,
+            status: "ISSUED"
+          },
+          select: {
+            id: true,
+            customerId: true,
+            organisationId: true,
+            dueDate: true,
+            status: true
+          }
+        });
+        for (const invoice of invoices) {
+          await syncInvoiceReminders(tx, invoice, {
+            preserveScheduledRetries: true
+          });
+        }
+      }
+      return updated.count;
     });
-    if (updated.count !== 1) {
+
+    if (updatedCount !== 1) {
       return res.status(404).json({
         success: false,
         message: "Customer profile not found."
@@ -488,70 +549,12 @@ export const getCustomerReceiptPdf = async (req, res) => {
       return res.status(404).json({ success: false, message: "Posted receipt not found." });
     }
 
-    const document = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks = [];
-    document.on("data", (chunk) => chunks.push(chunk));
-    const pdf = new Promise((resolve, reject) => {
-      document.on("end", () => resolve(Buffer.concat(chunks)));
-      document.on("error", reject);
-    });
-    const logo = await loadBrandedPdfLogo();
-    drawBrandedPdfPageHeader(document, logo, "Payment Receipt", { titleFontSize: 16 });
-
-    document.moveDown().font("Helvetica-Bold").fontSize(10).fillColor("#e50914").text("RECEIPT DETAILS", 48, 91);
-    const row = (label, value, y) => {
-      document.font("Helvetica").fontSize(9).fillColor("#64748b").text(label, 48, y, { width: 150 });
-      document.font("Helvetica").fontSize(10).fillColor("#111827").text(String(value ?? "—"), 205, y, { width: 340 });
-    };
-    row("Receipt number", receipt.receiptNumber, 116);
-    row("Customer", receipt.customer.name, 138);
-    row("Email", receipt.customer.email, 160);
-    row("Phone", receipt.customer.phone, 182);
-    row("Billing address", receipt.customer.billingAddress, 204);
-    row("Customer tax registration", receipt.customer.taxRegistration, 226);
-    row("Payment date", receipt.receiptDate.toISOString().slice(0, 10), 248);
-    row("Payment method", receipt.paymentMethod, 270);
-    row("Transaction reference", receipt.transactionReference || "—", 292);
-    row("Status", receipt.status, 314);
-
-    document.moveTo(48, 344).lineTo(547, 344).lineWidth(1).strokeColor("#e2e8f0").stroke();
-    document.font("Helvetica-Bold").fontSize(10).fillColor("#e50914").text("INVOICE ALLOCATIONS", 48, 358);
-    let y = 384;
-    for (const allocation of receipt.allocations) {
-      if (y > 710) {
-        document.addPage();
-        y = 55;
-      }
-      document.font("Helvetica-Bold").fontSize(9).fillColor("#111827")
-        .text(allocation.invoice.invoiceNumber, 48, y);
-      document.font("Helvetica").fontSize(9).fillColor("#111827")
-        .text(`${receipt.currency} ${Number(allocation.amount).toFixed(2)}`, 360, y, { width: 180, align: "right" });
-      y += 17;
-      document.font("Helvetica").fontSize(8).fillColor("#64748b")
-        .text(`Subtotal ${allocation.invoice.currency} ${Number(allocation.invoice.subtotal).toFixed(2)} · Tax ${allocation.invoice.currency} ${Number(allocation.invoice.tax).toFixed(2)} · Invoice total ${allocation.invoice.currency} ${Number(allocation.invoice.total).toFixed(2)}`, 48, y, { width: 490 });
-      y += 20;
-    }
-    if (receipt.allocations.length === 0) {
-      document.font("Helvetica").fontSize(9).fillColor("#64748b").text("No invoice allocation is recorded for this receipt.", 48, y);
-      y += 20;
-    }
-    document.moveTo(48, y + 3).lineTo(547, y + 3).lineWidth(1).strokeColor("#e2e8f0").stroke();
-    document.font("Helvetica").fontSize(9).fillColor("#64748b").text("AMOUNT RECEIVED", 48, y + 18);
-    document.font("Helvetica-Bold").fontSize(16).fillColor("#111827")
-      .text(`${receipt.currency} ${Number(receipt.amount).toFixed(2)}`, 205, y + 14);
-    document.moveTo(48, 756).lineTo(547, 756).lineWidth(1).strokeColor("#e2e8f0").stroke();
-    document.font("Helvetica").fontSize(8).fillColor("#64748b").text(
-      `${companyFooter()} · Generated from verified account records`,
-      48,
-      768,
-      { width: 490 }
-    );
-    document.end();
-
-    const buffer = await pdf;
-    const filename = receipt.receiptNumber.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const buffer = await buildCustomerReceiptPdf(receipt);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}.pdf"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${getCustomerReceiptPdfFilename(receipt.receiptNumber)}"`
+    );
     res.setHeader("Cache-Control", "private, no-store");
     return res.status(200).send(buffer);
   } catch (error) {

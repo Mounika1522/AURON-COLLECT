@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import {
   addBillingPeriod,
   amountInPaise,
+  createBillingOrderRecord,
   isPlanPurchasableForCycle,
   recordCapturedPayment
 } from "./subscription-billing.service.js";
@@ -46,6 +47,60 @@ test("only fully approved plans with a configured cycle price are purchasable", 
     limitsStatus: "APPROVED",
     monthlyPrice: new Prisma.Decimal("999.00")
   }, "YEARLY"), false);
+});
+
+test("built-in monthly plan orders use fixed official pricing without admin approval", async () => {
+  const pendingStarter = {
+    id: "starter-plan",
+    code: "STARTER",
+    name: "Starter",
+    isActive: false,
+    pricingStatus: "PENDING_APPROVAL",
+    limitsStatus: "PENDING_APPROVAL",
+    monthlyPrice: null,
+    proposedMonthlyPrice: new Prisma.Decimal("1500.00"),
+    currency: "USD"
+  };
+  let createdPayment;
+  const tx = {
+    $queryRaw: async () => [],
+    billingPayment: {
+      findUnique: async () => null,
+      findFirst: async () => null,
+      create: async ({ data }) => {
+        createdPayment = data;
+        return { id: "billing-payment-1", ...data, plan: pendingStarter };
+      }
+    },
+    subscription: {
+      updateMany: async () => ({ count: 0 }),
+      findFirst: async () => null
+    },
+    subscriptionPlan: {
+      findUnique: async () => pendingStarter
+    }
+  };
+  const db = {
+    $transaction: async (callback) => callback(tx)
+  };
+
+  assert.equal(isPlanPurchasableForCycle(pendingStarter, "MONTHLY"), true);
+  assert.equal(isPlanPurchasableForCycle(pendingStarter, "YEARLY"), false);
+  const result = await createBillingOrderRecord(
+    "org-1",
+    "user-1",
+    "STARTER",
+    "MONTHLY",
+    "subscription-order-001",
+    db,
+    { customerId: "customer-1" }
+  );
+
+  assert.equal(result.record.id, "billing-payment-1");
+  assert.equal(createdPayment.amount.toFixed(2), "999.00");
+  assert.equal(createdPayment.currency, "INR");
+  assert.equal(createdPayment.planId, "starter-plan");
+  assert.equal(createdPayment.customerId, "customer-1");
 });
 
 test("only an exactly matching captured order can create a subscription and invoice", async () => {

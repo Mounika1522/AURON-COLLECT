@@ -1,5 +1,10 @@
 import prisma from "../config/prisma.js";
 import { getCurrentSubscriptionForOrganisation } from "../services/subscription-billing.service.js";
+import {
+  getOfficialSubscriptionPlanCodes,
+  projectSubscriptionPlanForCatalog
+} from "../services/official-subscription-plans.js";
+import { getRazorpayConfigurationStatus } from "../services/razorpay.service.js";
 
 const isPlatformAdmin = (req, res) => {
   if (req.user.role !== "SUPER_ADMIN") {
@@ -48,15 +53,26 @@ const validateLimit = (value, field) => {
 
 export const getSubscriptionPlans = async (req, res) => {
   try {
-    const plans = await prisma.subscriptionPlan.findMany({
+    const records = await prisma.subscriptionPlan.findMany({
       where: {
-        isActive: true,
-        pricingStatus: "APPROVED",
-        limitsStatus: "APPROVED"
+        OR: [
+          { code: { in: getOfficialSubscriptionPlanCodes() } },
+          {
+            isActive: true,
+            pricingStatus: "APPROVED",
+            limitsStatus: "APPROVED"
+          }
+        ]
       },
       orderBy: { createdAt: "asc" }
     });
-    return res.status(200).json({ success: true, count: plans.length, plans });
+    const plans = records.map(projectSubscriptionPlanForCatalog);
+    return res.status(200).json({
+      success: true,
+      count: plans.length,
+      plans,
+      billingConfiguration: getRazorpayConfigurationStatus()
+    });
   } catch (error) {
     console.error("Get subscription plans failed:", error.code || error.name);
     return res.status(500).json({

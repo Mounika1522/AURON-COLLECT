@@ -336,6 +336,15 @@ export const verifyCustomerEmail = async (req, res) => {
         message: "The verification code is invalid, expired, or no longer accepted."
       });
     }
+    await prisma.reminder.updateMany({
+      where: {
+        customerId: account.customerId,
+        organisationId: account.customer.organisationId,
+        status: "PENDING",
+        deliveryStatus: "WAITING_FOR_VERIFIED_EMAIL"
+      },
+      data: { nextAttemptAt: verifiedAt }
+    });
     await createCustomerNotification({
       customerId: account.customerId,
       organisationId: account.customer.organisationId,

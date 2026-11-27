@@ -5,6 +5,7 @@ import {
   buildAdminNotificationResponse,
   getAdminNotificationAccess,
   isValidNotificationSourceKey,
+  mapEmailDeliveryAttemptNotification,
   mapAutomatedEmailReminders,
 } from "./admin-notification.service.js";
 
@@ -124,6 +125,31 @@ test("notification read endpoint identifiers accept only typed UUID source keys"
   assert.equal(isValidNotificationSourceKey(`FAILED_EMAIL:${"x".repeat(200)}`), false);
 });
 
+test("admin notifications expose missing verified customer email attempts", () => {
+  const attempt = {
+    id: notificationId,
+    purpose: "PAYMENT_RECEIPT",
+    recipient: "",
+    status: "SKIPPED",
+    errorCode: "NO_VERIFIED_EMAIL",
+    createdAt: new Date("2026-11-30T12:00:00.000Z"),
+    customer: { name: "Customer One" },
+    customerSubscriptionReceipt: { receiptNumber: "CS-REC-001" },
+  };
+  const notification = mapEmailDeliveryAttemptNotification(attempt, "org-1");
+  const access = getAdminNotificationAccess({
+    userId: "admin-1",
+    organisationId: "org-1",
+    role: "ADMIN",
+  });
+  const response = buildAdminNotificationResponse([notification], [], access);
+
+  assert.equal(response.notifications.length, 1);
+  assert.equal(response.notifications[0].title, "Customer email not verified");
+  assert.match(response.notifications[0].message, /CS-REC-001/);
+  assert.match(response.notifications[0].message, /No verified customer email/);
+});
+
 test("automated email history uses email attempts and excludes manual or non-email reminders", () => {
   const reminders = [
     {
@@ -198,4 +224,62 @@ test("automated email history exposes failure details from the latest failed att
 
   assert.equal(history[0].deliveryStatus, "FAILED");
   assert.equal(history[0].failureStatus, "SMTP_REJECTED");
+});
+
+test("automated email history reports verified-recipient waiting state and retry timestamps", () => {
+  const nextAttemptAt = new Date("2026-11-30T12:00:00.000Z");
+  const history = mapAutomatedEmailReminders(
+    [{
+      id: "automated-pending",
+      dedupeKey: "invoice:invoice-2:DUE_DATE",
+      channel: "EMAIL",
+      status: "PENDING",
+      deliveryStatus: "WAITING_FOR_VERIFIED_EMAIL",
+      attemptCount: 0,
+      nextAttemptAt,
+      customer: {
+        name: "Customer Two",
+        email: "unverified-crm@example.test",
+        portalAccount: { timeZone: "America/New_York" }
+      },
+      invoice: { invoiceNumber: "INV-002" }
+    }],
+    []
+  );
+
+  assert.equal(history[0].recipient, "");
+  assert.equal(history[0].deliveryStatus, "WAITING_FOR_VERIFIED_EMAIL");
+  assert.equal(history[0].customerTimeZone, "America/New_York");
+  assert.equal(history[0].nextAttemptAt, nextAttemptAt);
+  assert.equal(history[0].attemptCount, 0);
+  assert.equal(history[0].failureStatus, null);
+});
+
+test("automated email history exposes ambiguous delivery failures for admin review", () => {
+  const history = mapAutomatedEmailReminders(
+    [{
+      id: "automated-unknown",
+      dedupeKey: "invoice:invoice-3:OVERDUE_1_DAY",
+      channel: "EMAIL",
+      status: "FAILED",
+      deliveryStatus: "DELIVERY_UNKNOWN",
+      lastError: "DELIVERY_OUTCOME_UNKNOWN",
+      customer: { name: "Customer Three" },
+      invoice: { invoiceNumber: "INV-003" }
+    }],
+    [{
+      purpose: "PAYMENT_REMINDER:invoice:invoice-3:OVERDUE_1_DAY",
+      recipient: "verified@example.test",
+      status: "DELIVERY_UNKNOWN",
+      errorCode: "DELIVERY_OUTCOME_UNKNOWN",
+      attemptCount: 1,
+      attemptedAt: new Date("2026-11-30T11:00:00.000Z"),
+      createdAt: new Date("2026-11-30T10:59:00.000Z")
+    }]
+  );
+
+  assert.equal(history[0].deliveryStatus, "DELIVERY_UNKNOWN");
+  assert.equal(history[0].failureStatus, "DELIVERY_OUTCOME_UNKNOWN");
+  assert.equal(history[0].attemptCount, 1);
+  assert.equal(history[0].lastAttemptAt.toISOString(), "2026-11-30T11:00:00.000Z");
 });

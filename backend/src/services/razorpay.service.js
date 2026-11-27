@@ -12,12 +12,33 @@ const safeEqualHex = (provided, expected) => {
   );
 };
 
+export const getRazorpayConfigurationStatus = (env = process.env) => {
+  const mode = env.RAZORPAY_MODE;
+  const expectedKeyPrefix =
+    mode === "test" ? "rzp_test_" : mode === "live" ? "rzp_live_" : null;
+  const available = Boolean(
+    expectedKeyPrefix &&
+      typeof env.RAZORPAY_KEY_ID === "string" &&
+      env.RAZORPAY_KEY_ID.startsWith(expectedKeyPrefix) &&
+      typeof env.RAZORPAY_KEY_SECRET === "string" &&
+      env.RAZORPAY_KEY_SECRET.trim()
+  );
+  return {
+    available,
+    mode: available ? mode : null
+  };
+};
+
+export const assertRazorpayConfiguration = (env = process.env) => {
+  if (!getRazorpayConfigurationStatus(env).available) {
+    const error = new Error("Razorpay configuration is unavailable");
+    error.code = "RAZORPAY_CONFIGURATION_UNAVAILABLE";
+    throw error;
+  }
+};
+
 export const assertRazorpayTestMode = (env = process.env) => {
-  if (
-    env.RAZORPAY_MODE !== "test" ||
-    !env.RAZORPAY_KEY_ID?.startsWith("rzp_test_") ||
-    !env.RAZORPAY_KEY_SECRET
-  ) {
+  if (getRazorpayConfigurationStatus(env).mode !== "test") {
     const error = new Error("Razorpay test-mode configuration is unavailable");
     error.code = "RAZORPAY_TEST_MODE_UNAVAILABLE";
     throw error;
@@ -25,7 +46,7 @@ export const assertRazorpayTestMode = (env = process.env) => {
 };
 
 export const createRazorpayClient = (env = process.env) => {
-  assertRazorpayTestMode(env);
+  assertRazorpayConfiguration(env);
   return new Razorpay({
     key_id: env.RAZORPAY_KEY_ID,
     key_secret: env.RAZORPAY_KEY_SECRET

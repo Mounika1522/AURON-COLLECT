@@ -164,19 +164,23 @@ export const answerCustomerAssistant = async (req, res) => {
       plans: plansForAssistant,
       receiptCount
     });
+    const userMessageCreatedAt = new Date();
+    const assistantMessageCreatedAt = new Date(userMessageCreatedAt.getTime() + 1);
     await prisma.$transaction([
       prisma.customerAssistantMessage.create({
         data: {
           ...scope,
           role: "user",
-          content: message.trim()
+          content: message.trim(),
+          createdAt: userMessageCreatedAt
         }
       }),
       prisma.customerAssistantMessage.create({
         data: {
           ...scope,
           role: "assistant",
-          content: reply
+          content: reply,
+          createdAt: assistantMessageCreatedAt
         }
       })
     ]);

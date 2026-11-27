@@ -34,7 +34,8 @@ const authMiddleware = async (req, res, next) => {
         name: true,
         email: true,
         role: true,
-        organisationId: true
+        organisationId: true,
+        sessionVersion: true
       }
     });
 
@@ -42,6 +43,17 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: "User account not found or access revoked"
+      });
+    }
+
+    const tokenSessionVersion = decoded.sessionVersion ?? 0;
+    if (
+      !Number.isInteger(tokenSessionVersion) ||
+      tokenSessionVersion !== user.sessionVersion
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: "Your session is no longer valid. Please sign in again."
       });
     }
 

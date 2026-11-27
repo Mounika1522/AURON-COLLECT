@@ -21,3 +21,4 @@ backend/auron-invoices-*.xlsx
 backend/invoice-sample.csv
 
 backend/src/controllers/reminder.controller.j
+.neon

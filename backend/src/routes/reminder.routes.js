@@ -8,7 +8,10 @@ import {
   createReminder,
   getReminders,
   getReminderById,
-  updateReminderStatus
+  updateReminderStatus,
+  deleteReminder,
+  previewReminderEmail,
+  sendReminderNow
 } from "../controllers/reminder.controller.js";
 
 import authMiddleware from "../middleware/auth.middleware.js";
@@ -27,7 +30,10 @@ router.patch("/templates/:id", updateReminderTemplate);
 // Scheduled reminders
 router.post("/", createReminder);
 router.get("/", getReminders);
+router.get("/:id/preview", previewReminderEmail);
+router.post("/:id/send-now", sendReminderNow);
 router.get("/:id", getReminderById);
 router.patch("/:id/status", updateReminderStatus);
+router.delete("/:id", deleteReminder);
 
 export default router;

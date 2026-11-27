@@ -22,13 +22,20 @@ export const getIstDateTimeLocalValue = (now = new Date()) => {
 };
 
 export const formatReminderDateTimeIst = (value) => {
+  return formatReminderDateTime(value, "Asia/Kolkata");
+};
+
+export const formatReminderDateTime = (
+  value,
+  timeZone = "Asia/Kolkata"
+) => {
   if (value === null || value === undefined || value === "") return "-";
 
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
 
   return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
+    timeZone,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

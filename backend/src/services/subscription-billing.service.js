@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../config/prisma.js";
+import { getOfficialSubscriptionPlan } from "./official-subscription-plans.js";
 
 const paiseFor = (amount) =>
   new Prisma.Decimal(amount).mul(100).toDecimalPlaces(0).toNumber();
@@ -128,8 +129,14 @@ export const recordCapturedPayment = async (
 export const amountInPaise = paiseFor;
 
 export const isPlanPurchasableForCycle = (plan, billingCycle) => {
+  if (!plan) return false;
+
+  const officialPlan = getOfficialSubscriptionPlan(plan.code);
+  if (officialPlan) {
+    return billingCycle === "MONTHLY" && officialPlan.monthlyPrice !== null;
+  }
+
   if (
-    !plan ||
     !plan.isActive ||
     plan.pricingStatus !== "APPROVED" ||
     plan.limitsStatus !== "APPROVED" ||
@@ -192,8 +199,10 @@ export const createBillingOrderRecord = async (
   userId,
   planCode,
   billingCycle,
-  idempotencyKey
-) => prisma.$transaction(
+  idempotencyKey,
+  db = prisma,
+  { customerId = null } = {}
+) => db.$transaction(
   async (tx) => {
     await tx.$queryRaw`
       SELECT "id" FROM "Organisation" WHERE "id" = ${organisationId} FOR UPDATE
@@ -206,7 +215,11 @@ export const createBillingOrderRecord = async (
       include: { plan: true }
     });
     if (existing) {
-      if (existing.status === "CREATED" && existing.razorpayOrderId) {
+      if (
+        existing.status === "CREATED" &&
+        existing.razorpayOrderId &&
+        (!customerId || existing.customerId === customerId)
+      ) {
         return { existing };
       }
       const error = new Error("This idempotency key cannot be reused");
@@ -223,15 +236,24 @@ export const createBillingOrderRecord = async (
       throw error;
     }
 
-    if (!plan.isActive || plan.pricingStatus !== "APPROVED" ||
-      plan.limitsStatus !== "APPROVED") {
+    const officialPlan = getOfficialSubscriptionPlan(plan.code);
+    if (
+      !officialPlan &&
+      (!plan.isActive ||
+        plan.pricingStatus !== "APPROVED" ||
+        plan.limitsStatus !== "APPROVED")
+    ) {
       const error = new Error("This plan is not approved for purchase");
       error.code = "PLAN_NOT_PURCHASABLE";
       throw error;
     }
 
     const amount =
-      billingCycle === "YEARLY" ? plan.yearlyPrice : plan.monthlyPrice;
+      officialPlan
+        ? officialPlan.monthlyPrice
+        : billingCycle === "YEARLY"
+          ? plan.yearlyPrice
+          : plan.monthlyPrice;
     if (!isPlanPurchasableForCycle(plan, billingCycle)) {
       const error = new Error("No approved price is configured for this cycle");
       error.code = "PLAN_CYCLE_UNAVAILABLE";
@@ -250,7 +272,8 @@ export const createBillingOrderRecord = async (
         pending.status === "CREATED" &&
         pending.razorpayOrderId &&
         pending.planId === plan.id &&
-        pending.billingCycle === billingCycle
+        pending.billingCycle === billingCycle &&
+        (!customerId || pending.customerId === customerId)
       ) {
         return { existing: pending };
       }
@@ -287,10 +310,11 @@ export const createBillingOrderRecord = async (
     const record = await tx.billingPayment.create({
       data: {
         organisationId,
+        customerId,
         planId: plan.id,
         billingCycle,
         amount: amountDecimal,
-        currency: plan.currency,
+        currency: officialPlan?.currency || plan.currency,
         status: "CREATING",
         idempotencyKey,
         effectiveAt,

@@ -5,6 +5,7 @@ import {
   buildAdminNotificationResponse,
   getAdminNotificationAccess,
   isValidNotificationSourceKey,
+  mapEmailDeliveryAttemptNotification,
   mapAutomatedEmailReminders,
 } from "../services/admin-notification.service.js";
 import {
@@ -160,6 +161,46 @@ const notificationEvents = async (access, now) => {
       ? { assignedExecutive: access.assignedExecutive }
       : {}),
   };
+  const receiptRelationScope = {
+    organisationId,
+    customer: { organisationId },
+    ...(access.assignedExecutive
+      ? {
+          allocations: {
+            some: {
+              invoice: {
+                organisationId,
+                assignedExecutive: access.assignedExecutive,
+              },
+            },
+          },
+        }
+      : {}),
+  };
+  const emailAttemptAccessScope = access.assignedExecutive
+    ? {
+        OR: [
+          { invoice: invoiceRelationScope },
+          { receipt: receiptRelationScope },
+        ],
+      }
+    : {
+        OR: [
+          { invoice: invoiceRelationScope },
+          { receipt: receiptRelationScope },
+          {
+            customerSubscriptionReceipt: {
+              organisationId,
+              customer: { organisationId },
+            },
+          },
+          {
+            invoiceId: null,
+            receiptId: null,
+            customerSubscriptionReceiptId: null,
+          },
+        ],
+      };
 
   const [
     overdueInvoices,
@@ -279,16 +320,25 @@ const notificationEvents = async (access, now) => {
     }),
     prisma.emailDeliveryAttempt.findMany({
       where: {
-        status: "FAILED",
-        purpose: { startsWith: "PAYMENT_REMINDER:" },
+        status: {
+          in: [
+            "FAILED",
+            "SKIPPED",
+            "DISABLED",
+            "DELIVERY_UNKNOWN",
+            "RETRY_SCHEDULED",
+          ],
+        },
         createdAt: { gte: recentFrom },
         customer: { organisationId },
-        invoice: invoiceRelationScope,
+        ...emailAttemptAccessScope,
       },
       select: {
         id: true,
         customerId: true,
+        purpose: true,
         recipient: true,
+        status: true,
         errorCode: true,
         errorMessage: true,
         attemptedAt: true,
@@ -300,6 +350,26 @@ const notificationEvents = async (access, now) => {
             assignedExecutive: true,
             organisationId: true,
           },
+        },
+        receipt: {
+          select: {
+            receiptNumber: true,
+            organisationId: true,
+            allocations: {
+              where: receiptAllocationScope,
+              select: {
+                invoice: {
+                  select: {
+                    assignedExecutive: true,
+                    organisationId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        customerSubscriptionReceipt: {
+          select: { receiptNumber: true, organisationId: true },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -389,17 +459,7 @@ const notificationEvents = async (access, now) => {
     );
   }
   for (const attempt of failedEmails) {
-    events.push(
-      createEvent({
-        type: "FAILED_EMAIL",
-        sourceId: attempt.id,
-        organisationId,
-        assignedExecutive: attempt.invoice.assignedExecutive,
-        title: "Automated email failed",
-        message: `${attempt.customer.name} · ${attempt.invoice.invoiceNumber} · ${attempt.recipient} · ${attempt.errorCode || attempt.errorMessage || "Email delivery failed"}.`,
-        createdAt: attempt.attemptedAt || attempt.createdAt,
-      }),
-    );
+    events.push(mapEmailDeliveryAttemptNotification(attempt, organisationId));
   }
 
   return events;
@@ -524,7 +584,16 @@ export const getAutomatedEmailReminderHistory = async (req, res) => {
         deliveryStatus: true,
         lastError: true,
         createdAt: true,
-        customer: { select: { name: true, email: true, organisationId: true } },
+        attemptCount: true,
+        nextAttemptAt: true,
+        customer: {
+          select: {
+            name: true,
+            email: true,
+            organisationId: true,
+            portalAccount: { select: { timeZone: true } }
+          }
+        },
         invoice: { select: { invoiceNumber: true, organisationId: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -552,6 +621,7 @@ export const getAutomatedEmailReminderHistory = async (req, res) => {
             status: true,
             errorCode: true,
             errorMessage: true,
+            attemptCount: true,
             attemptedAt: true,
             acceptedAt: true,
             createdAt: true,

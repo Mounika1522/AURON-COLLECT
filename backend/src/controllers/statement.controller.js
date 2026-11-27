@@ -15,6 +15,14 @@ import {
 // Decimal helpers for accurate financial calculations
 const decimal = (value) => new Prisma.Decimal(value ?? 0);
 
+const ageingBuckets = [
+  "notYetDue",
+  "days1To30",
+  "days31To60",
+  "days61To90",
+  "above90Days"
+];
+
 const money = (value) => decimal(value).toNumber();
 
 const maxZero = (value) => {
@@ -152,11 +160,6 @@ const buildStatement = async (req) => {
     }
   });
 
-  let openingBalance = decimal(0);
-  let periodInvoices = decimal(0);
-  let periodReceipts = decimal(0);
-  let periodAdjustments = decimal(0);
-
   const transactions = [];
   const balancesByCurrency = new Map();
   const getCurrencyBalance = (currency) => {
@@ -165,18 +168,13 @@ const buildStatement = async (req) => {
         openingBalance: decimal(0),
         totalInvoices: decimal(0),
         totalReceipts: decimal(0),
-        adjustments: decimal(0)
+        adjustments: decimal(0),
+        ageing: Object.fromEntries(
+          ageingBuckets.map((key) => [key, decimal(0)])
+        )
       });
     }
     return balancesByCurrency.get(currency);
-  };
-
-  const ageing = {
-    notYetDue: decimal(0),
-    days1To30: decimal(0),
-    days31To60: decimal(0),
-    days61To90: decimal(0),
-    above90Days: decimal(0)
   };
 
   // Process each invoice
@@ -246,7 +244,6 @@ const buildStatement = async (req) => {
           .minus(allocatedBeforePeriod)
           .minus(adjustmentsBeforePeriod)
       );
-      openingBalance = openingBalance.plus(invoiceOpeningBalance);
       currencyBalance.openingBalance = currencyBalance.openingBalance.plus(invoiceOpeningBalance);
     }
 
@@ -255,7 +252,6 @@ const buildStatement = async (req) => {
       invoice.invoiceDate >= startDate &&
       invoice.invoiceDate <= endDate
     ) {
-      periodInvoices = periodInvoices.plus(invoiceAmount);
       currencyBalance.totalInvoices = currencyBalance.totalInvoices.plus(invoiceAmount);
 
       transactions.push({
@@ -279,7 +275,6 @@ const buildStatement = async (req) => {
       ) {
         const allocationAmount = decimal(allocation.amount);
 
-        periodReceipts = periodReceipts.plus(allocationAmount);
         currencyBalance.totalReceipts = currencyBalance.totalReceipts.plus(allocationAmount);
 
         transactions.push({
@@ -305,9 +300,6 @@ const buildStatement = async (req) => {
       ) {
         const adjustmentAmount = decimal(adjustment.amount);
 
-        periodAdjustments = periodAdjustments.plus(
-          adjustmentAmount
-        );
         currencyBalance.adjustments = currencyBalance.adjustments.plus(adjustmentAmount);
 
         transactions.push({
@@ -333,36 +325,23 @@ const buildStatement = async (req) => {
       );
 
       if (invoice.dueDate > endDate) {
-        ageing.notYetDue = ageing.notYetDue.plus(
-          invoiceOutstanding
-        );
+        currencyBalance.ageing.notYetDue =
+          currencyBalance.ageing.notYetDue.plus(invoiceOutstanding);
       } else if (overdueDays <= 30) {
-        ageing.days1To30 = ageing.days1To30.plus(
-          invoiceOutstanding
-        );
+        currencyBalance.ageing.days1To30 =
+          currencyBalance.ageing.days1To30.plus(invoiceOutstanding);
       } else if (overdueDays <= 60) {
-        ageing.days31To60 = ageing.days31To60.plus(
-          invoiceOutstanding
-        );
+        currencyBalance.ageing.days31To60 =
+          currencyBalance.ageing.days31To60.plus(invoiceOutstanding);
       } else if (overdueDays <= 90) {
-        ageing.days61To90 = ageing.days61To90.plus(
-          invoiceOutstanding
-        );
+        currencyBalance.ageing.days61To90 =
+          currencyBalance.ageing.days61To90.plus(invoiceOutstanding);
       } else {
-        ageing.above90Days = ageing.above90Days.plus(
-          invoiceOutstanding
-        );
+        currencyBalance.ageing.above90Days =
+          currencyBalance.ageing.above90Days.plus(invoiceOutstanding);
       }
     }
   }
-
-  // Closing outstanding = Opening + Invoices - Receipts - Adjustments
-  const closingOutstanding = maxZero(
-    openingBalance
-      .plus(periodInvoices)
-      .minus(periodReceipts)
-      .minus(periodAdjustments)
-  );
 
   // Sort transactions by date
   transactions.sort((a, b) => {
@@ -411,6 +390,39 @@ const buildStatement = async (req) => {
     };
   });
 
+  const currencySummaries = Object.fromEntries(
+    [...balancesByCurrency].map(([currency, values]) => [
+      currency,
+      {
+        openingBalance: money(values.openingBalance),
+        totalInvoices: money(values.totalInvoices),
+        totalReceipts: money(values.totalReceipts),
+        adjustments: money(values.adjustments),
+        closingOutstanding: money(maxZero(
+          values.openingBalance
+            .plus(values.totalInvoices)
+            .minus(values.totalReceipts)
+            .minus(values.adjustments)
+        )),
+        ageing: Object.fromEntries(
+          Object.entries(values.ageing).map(([key, value]) => [
+            key,
+            money(value)
+          ])
+        )
+      }
+    ])
+  );
+  const currencySummaryEntries = Object.entries(currencySummaries);
+  const singleCurrencySummary =
+    currencySummaryEntries.length === 1
+      ? currencySummaryEntries[0]
+      : null;
+  const emptyStatement = currencySummaryEntries.length === 0;
+  const summaryValues = singleCurrencySummary?.[1];
+  const unavailableWhenMixed = (value) =>
+    summaryValues ? value : emptyStatement ? 0 : null;
+
   return {
     customer: {
       id: customer.id,
@@ -427,37 +439,22 @@ const buildStatement = async (req) => {
     },
 
     summary: {
-      openingBalance: money(openingBalance),
-      totalInvoices: money(periodInvoices),
-      totalReceipts: money(periodReceipts),
-      adjustments: money(periodAdjustments),
-      closingOutstanding: money(closingOutstanding)
+      currency: singleCurrencySummary?.[0] || null,
+      openingBalance: unavailableWhenMixed(summaryValues?.openingBalance),
+      totalInvoices: unavailableWhenMixed(summaryValues?.totalInvoices),
+      totalReceipts: unavailableWhenMixed(summaryValues?.totalReceipts),
+      adjustments: unavailableWhenMixed(summaryValues?.adjustments),
+      closingOutstanding: unavailableWhenMixed(summaryValues?.closingOutstanding)
     },
 
-    currencySummaries: Object.fromEntries(
-      [...balancesByCurrency].map(([currency, values]) => [
-        currency,
-        {
-          openingBalance: money(values.openingBalance),
-          totalInvoices: money(values.totalInvoices),
-          totalReceipts: money(values.totalReceipts),
-          adjustments: money(values.adjustments),
-          closingOutstanding: money(maxZero(
-            values.openingBalance
-              .plus(values.totalInvoices)
-              .minus(values.totalReceipts)
-              .minus(values.adjustments)
-          ))
-        }
-      ])
-    ),
+    currencySummaries,
 
     transactions: statementTransactions,
 
     ageing: Object.fromEntries(
-      Object.entries(ageing).map(([key, value]) => [
+      ageingBuckets.map((key) => [
         key,
-        money(value)
+        unavailableWhenMixed(summaryValues?.ageing[key])
       ])
     )
   };

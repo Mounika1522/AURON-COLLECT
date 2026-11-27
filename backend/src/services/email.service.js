@@ -2,70 +2,73 @@
 import nodemailer from "nodemailer";
 import {
   assertEmailDeliveryEnabled,
-  TEST_EMAIL_PURPOSE
+  getMissingSmtpConfiguration,
+  loadDevelopmentSmtpVariables
 } from "../config/runtime-safety.js";
 
-const createTransporter = () => {
-  const required = [
-    "SMTP_HOST",
-    "SMTP_PORT",
-    "SMTP_USER",
-    "SMTP_PASS",
-    "EMAIL_FROM"
-  ];
+loadDevelopmentSmtpVariables();
 
-  const missing = required.filter(
-    (key) => !process.env[key]
-  );
-
-  if (missing.length > 0) {
+export const getSmtpTransportOptions = (env = process.env) => {
+  const missing = getMissingSmtpConfiguration(env);
+  if (missing.length) {
     throw new Error(
-      `Missing email configuration: ${missing.join(", ")}`
+      `Missing or invalid email configuration: ${missing.join(", ")}`
     );
   }
 
-  const port = Number(process.env.SMTP_PORT);
+  const port = Number(env.SMTP_PORT);
 
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
+  return {
+    host: env.SMTP_HOST,
     port,
     secure: port === 465,
+    requireTLS: port === 587,
+    tls: { minVersion: "TLSv1.2" },
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
+      user: env.SMTP_USER,
+      pass: env.SMTP_PASS
     }
-  });
+  };
 };
 
-const deliverEmail = async ({ to, subject, text, html }) => {
-  const transporter = createTransporter();
+const createTransporter = (env = process.env) =>
+  nodemailer.createTransport(getSmtpTransportOptions(env));
+
+const deliverEmail = async (
+  { to, subject, text, html, attachments },
+  env,
+  transporterFactory
+) => {
+  const transporter = transporterFactory(env);
 
   return await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+    from: env.EMAIL_FROM,
     to,
     subject,
     text,
-    html
+    html,
+    ...(attachments?.length ? { attachments } : {})
   });
 };
 
-export const sendEmail = async ({ purpose, to, subject, text, html }) => {
-  if (purpose === TEST_EMAIL_PURPOSE) {
-    throw new Error("Use sendTestEmail for test email delivery.");
-  }
-
-  assertEmailDeliveryEnabled(purpose);
-  return deliverEmail({ to, subject, text, html });
-};
-
-export const sendTestEmail = async (to) => {
-  assertEmailDeliveryEnabled(TEST_EMAIL_PURPOSE, process.env, to);
-
-  return deliverEmail({
-    to,
-    subject: "Auron Collect - Test Email",
-    text: "Your Auron Collect email service is working successfully."
+export const sendEmail = async (
+  { purpose, to, subject, text, html, attachments },
+  {
+    manualSend = false,
+    schedulerSend = false,
+    env = process.env,
+    transporterFactory = createTransporter
+  } = {}
+) => {
+  assertEmailDeliveryEnabled(purpose, env, {
+    allowDevelopmentManualSend: manualSend,
+    allowDevelopmentReminderScheduler: schedulerSend
   });
+  return deliverEmail(
+    { to, subject, text, html, attachments },
+    env,
+    transporterFactory
+  );
 };
 
 export const verifyEmailConnection = async () => {

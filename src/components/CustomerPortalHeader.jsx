@@ -98,25 +98,25 @@ export default function CustomerPortalHeader({
   }, [showNotifications]);
 
   return (
-    <header className={`sticky top-0 z-30 border-b px-4 sm:px-6 ${bgCard}`}>
-      <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+    <header className={`customer-portal-header sticky top-0 z-30 border-b ${bgCard}`}>
+      <div className="relative mx-auto flex min-h-[4.5rem] max-w-7xl items-center gap-2 px-3 sm:min-h-[4.75rem] sm:gap-3 sm:px-6">
+        <div className="flex min-w-0 shrink-0 items-center gap-2.5 sm:gap-3">
           <img
             src="/auron-logo.png"
             alt="Auron Collect"
-            className="h-9 w-9 shrink-0 object-contain"
+            className="h-9 w-9 shrink-0 object-contain sm:h-10 sm:w-10"
           />
-          <div className="min-w-0">
-            <span className="block truncate text-xs font-bold tracking-wide">
+          <div className="min-w-0 leading-tight">
+            <span className="block truncate text-[11px] font-extrabold tracking-[0.08em] sm:text-xs">
               AURON COLLECT
             </span>
-            <span className={`text-[10px] font-semibold ${darkMode ? "text-blue-400" : "text-blue-700"}`}>
+            <span className={`mt-1 block text-[9px] font-bold uppercase tracking-[0.12em] ${darkMode ? "text-blue-300" : "text-blue-700"}`}>
               CUSTOMER PORTAL
             </span>
           </div>
         </div>
 
-        <nav className="hidden w-full flex-col gap-1 border-t py-2 sm:order-none sm:flex sm:w-auto sm:flex-row sm:border-0 sm:py-0">
+        <nav aria-label="Customer navigation" className="hidden min-w-0 flex-1 items-center justify-center gap-1 overflow-x-auto px-1 xl:flex">
           {tabs.map(([id, label]) => (
             <button
               key={id}
@@ -125,10 +125,10 @@ export default function CustomerPortalHeader({
                 setCustomerPortalTab(id);
                 setShowMobileMenu(false);
               }}
-              className={`whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-semibold transition-colors duration-200 ease-out ${
+              className={`min-h-10 shrink-0 whitespace-nowrap rounded-lg border px-3 text-[11px] font-semibold transition-colors duration-200 ease-out ${
                 customerPortalTab === id
-                  ? "bg-[#E50914] text-white"
-                  : `${bgSurface} border`
+                  ? "border-[#E50914]/20 bg-[#E50914]/10 text-[#E50914]"
+                  : `${bgSurface} hover:border-[#E50914]/30 hover:text-[#E50914]`
               }`}
             >
               {label}
@@ -141,27 +141,32 @@ export default function CustomerPortalHeader({
           ))}
         </nav>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-2">
           <button
             type="button"
-            className={`grid min-h-11 min-w-11 place-items-center rounded-lg border sm:hidden ${bgSurface}`}
+            className={`grid h-9 w-9 place-items-center rounded-xl border sm:h-10 sm:w-10 xl:hidden ${bgSurface}`}
             aria-label={showMobileMenu ? "Close navigation menu" : "Open navigation menu"}
             aria-expanded={showMobileMenu}
             onClick={() => setShowMobileMenu((open) => !open)}
           >
             {showMobileMenu ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </button>
-          <span className="hidden max-w-32 truncate text-xs sm:block">
-            {user?.fullName}
-          </span>
-          <div className="relative" ref={notificationRoot}>
+          <div className="hidden min-w-0 items-center gap-2 border-l pl-3 lg:flex">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E50914]/10 text-xs font-extrabold text-[#E50914]">
+              {(user?.fullName || "C").trim().charAt(0).toUpperCase()}
+            </span>
+            <span className="max-w-36 truncate text-xs font-semibold">
+              {user?.fullName}
+            </span>
+          </div>
+          <div className="relative shrink-0" ref={notificationRoot}>
             <button
               ref={notificationTrigger}
               aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
               aria-expanded={showNotifications}
               aria-controls="customer-notifications-dropdown"
               onClick={() => setShowNotifications((open) => !open)}
-              className={`relative rounded-lg border p-2 ${bgSurface}`}
+              className={`relative grid h-9 w-9 place-items-center rounded-xl border sm:h-10 sm:w-10 ${bgSurface}`}
               title="Notifications"
             >
               <Bell className="h-4 w-4" />
@@ -241,22 +246,25 @@ export default function CustomerPortalHeader({
               </div>
             </DropdownPresence>
           </div>
-          <ThemeToggle
-            darkMode={darkMode}
-            setDarkMode={setDarkMode}
-            bgSurface={bgSurface}
-          />
+          <div className="grid h-9 w-9 shrink-0 place-items-center sm:h-10 sm:w-10">
+            <ThemeToggle
+              darkMode={darkMode}
+              setDarkMode={setDarkMode}
+              bgSurface={bgSurface}
+            />
+          </div>
           <button
+            type="button"
             aria-label="Sign out"
             onClick={onLogout}
-            className={`rounded-lg border p-2 ${bgSurface}`}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl border sm:h-10 sm:w-10 ${bgSurface}`}
             title="Sign out"
           >
             <LogOut className="h-4 w-4" />
           </button>
         </div>
         {showMobileMenu && (
-          <nav aria-label="Customer navigation" className={`order-3 flex w-full flex-col gap-1 border-t py-2 sm:hidden ${darkMode ? "border-[#333]" : "border-slate-200"}`}>
+          <nav aria-label="Customer navigation" className={`absolute inset-x-0 top-full z-40 grid grid-cols-2 gap-2 border-t p-3 shadow-xl sm:grid-cols-3 xl:hidden ${bgCard}`}>
             {tabs.map(([id, label]) => (
               <button
                 key={id}
@@ -266,8 +274,10 @@ export default function CustomerPortalHeader({
                   setCustomerPortalTab(id);
                   setShowMobileMenu(false);
                 }}
-                className={`min-h-11 rounded-lg px-3 text-left text-xs font-semibold ${
-                  customerPortalTab === id ? "bg-[#E50914] text-white" : bgSurface
+                className={`min-h-11 rounded-xl border px-3 text-left text-xs font-semibold ${
+                  customerPortalTab === id
+                    ? "border-[#E50914]/20 bg-[#E50914]/10 text-[#E50914]"
+                    : `${bgSurface} hover:border-[#E50914]/30`
                 }`}
               >
                 {label}

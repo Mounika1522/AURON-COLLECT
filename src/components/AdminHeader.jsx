@@ -7,6 +7,7 @@ import {
   Settings,
   LockKeyhole,
   LogOut,
+  X,
 } from 'lucide-react';
 
 import ThemeToggle from './ThemeToggle';
@@ -52,6 +53,8 @@ export default function AdminHeader({
   currentUser,
   authToken,
   onLogout,
+  onPasswordChanged,
+  onOpenSettings,
   onOpenCustomerPortal,
   darkMode,
   setDarkMode,
@@ -63,6 +66,15 @@ export default function AdminHeader({
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showProfileDetails, setShowProfileDetails] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordChangeError, setPasswordChangeError] = useState("");
+  const [passwordChanging, setPasswordChanging] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -155,9 +167,39 @@ export default function AdminHeader({
     };
   }, [showNotifications, showProfile]);
 
+  const handlePasswordChange = async (event) => {
+    event.preventDefault();
+    if (passwordChanging) return;
+
+    setPasswordChanging(true);
+    setPasswordChangeError("");
+    try {
+      const response = await apiRequest("/api/auth/change-password", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify(passwordForm),
+      });
+      if (!response.token) {
+        throw new Error("Password changed, but your session could not be refreshed. Sign in again.");
+      }
+
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setShowPasswordChange(false);
+      onPasswordChanged?.(response.token);
+    } catch (error) {
+      setPasswordChangeError(error.message || "Unable to change your password.");
+    } finally {
+      setPasswordChanging(false);
+    }
+  };
+
   return (
     <header
-      className={`sticky top-0 z-30 h-16 border-b px-4 flex items-center justify-between ${bgCard}`}
+      className={`app-admin-header sticky top-0 z-30 h-16 border-b px-4 flex items-center justify-between ${bgCard}`}
     >
       {/* LEFT SIDE */}
       <div className="flex items-center space-x-3 min-w-0">
@@ -347,7 +389,10 @@ export default function AdminHeader({
 
               <div className="p-2 space-y-1">
                 <button
-                  onClick={() => window.alert('My Profile will be connected in the next development phase.')}
+                  onClick={() => {
+                    setShowProfile(false);
+                    setShowProfileDetails(true);
+                  }}
                   className={`dropdown-item w-full flex items-center gap-3 p-2.5 rounded-lg text-xs ${bgSurface}`}
                 >
                   <UserCircle className="w-4 h-4" />
@@ -355,7 +400,10 @@ export default function AdminHeader({
                 </button>
 
                 <button
-                  onClick={() => window.alert('Account Settings will be connected in the next development phase.')}
+                  onClick={() => {
+                    setShowProfile(false);
+                    onOpenSettings?.();
+                  }}
                   className={`dropdown-item w-full flex items-center gap-3 p-2.5 rounded-lg text-xs ${bgSurface}`}
                 >
                   <Settings className="w-4 h-4" />
@@ -363,7 +411,16 @@ export default function AdminHeader({
                 </button>
 
                 <button
-                  onClick={() => window.alert('Change Password will be connected with backend authentication.')}
+                  onClick={() => {
+                    setShowProfile(false);
+                    setPasswordForm({
+                      currentPassword: "",
+                      newPassword: "",
+                      confirmPassword: "",
+                    });
+                    setPasswordChangeError("");
+                    setShowPasswordChange(true);
+                  }}
                   className={`dropdown-item w-full flex items-center gap-3 p-2.5 rounded-lg text-xs ${bgSurface}`}
                 >
                   <LockKeyhole className="w-4 h-4" />
@@ -382,6 +439,150 @@ export default function AdminHeader({
           </DropdownPresence>
         </div>
       </div>
+      {showProfileDetails && (
+        <div
+          className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowProfileDetails(false);
+          }}
+        >
+          <section
+            aria-labelledby="staff-profile-title"
+            aria-modal="true"
+            className={`app-profile-dialog w-full max-w-md rounded-2xl border p-6 shadow-2xl ${bgCard}`}
+            role="dialog"
+          >
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#E50914]">Staff account</p>
+                <h2 id="staff-profile-title" className="mt-1 text-lg font-bold">Profile details</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close profile details"
+                onClick={() => setShowProfileDetails(false)}
+                className={`rounded-lg border p-2 ${bgSurface}`}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <dl className="space-y-3">
+              {[
+                ["Name", currentUser?.name || "—"],
+                ["Work email", currentUser?.email || "—"],
+                ["Role", currentRole || "—"],
+                ["Organisation", orgSettings.companyName || "—"],
+              ].map(([label, value]) => (
+                <div key={label} className={`flex flex-wrap justify-between gap-2 rounded-xl border p-3 ${bgSurface}`}>
+                  <dt className={`text-xs ${textMuted}`}>{label}</dt>
+                  <dd className="max-w-[65%] break-all text-right text-xs font-semibold">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        </div>
+      )}
+      {showPasswordChange && (
+        <div
+          className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !passwordChanging) {
+              setShowPasswordChange(false);
+            }
+          }}
+        >
+          <section
+            aria-labelledby="staff-password-title"
+            aria-modal="true"
+            className={`app-profile-dialog w-full max-w-md rounded-2xl border p-6 shadow-2xl ${bgCard}`}
+            role="dialog"
+          >
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#E50914]">Staff account</p>
+                <h2 id="staff-password-title" className="mt-1 text-lg font-bold">Change password</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close change password"
+                disabled={passwordChanging}
+                onClick={() => setShowPasswordChange(false)}
+                className={`rounded-lg border p-2 ${bgSurface}`}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="space-y-4" onSubmit={handlePasswordChange}>
+              <label className="block text-xs font-medium">
+                Current password
+                <input
+                  autoComplete="current-password"
+                  className={`mt-1.5 w-full rounded-xl border p-3 text-sm ${bgSurface}`}
+                  name="currentPassword"
+                  onChange={(event) => setPasswordForm((form) => ({ ...form, currentPassword: event.target.value }))}
+                  required
+                  type="password"
+                  value={passwordForm.currentPassword}
+                />
+              </label>
+              <label className="block text-xs font-medium">
+                New password
+                <input
+                  autoComplete="new-password"
+                  className={`mt-1.5 w-full rounded-xl border p-3 text-sm ${bgSurface}`}
+                  maxLength={72}
+                  minLength={12}
+                  name="newPassword"
+                  onChange={(event) => setPasswordForm((form) => ({ ...form, newPassword: event.target.value }))}
+                  required
+                  type="password"
+                  value={passwordForm.newPassword}
+                />
+              </label>
+              <label className="block text-xs font-medium">
+                Confirm new password
+                <input
+                  autoComplete="new-password"
+                  className={`mt-1.5 w-full rounded-xl border p-3 text-sm ${bgSurface}`}
+                  maxLength={72}
+                  minLength={12}
+                  name="confirmPassword"
+                  onChange={(event) => setPasswordForm((form) => ({ ...form, confirmPassword: event.target.value }))}
+                  required
+                  type="password"
+                  value={passwordForm.confirmPassword}
+                />
+              </label>
+              <p className={`text-[11px] leading-relaxed ${textMuted}`}>
+                Use at least 12 characters and 3 of these: lowercase, uppercase, number, and symbol. New passwords are limited to 72 UTF-8 bytes.
+              </p>
+              {passwordChangeError && (
+                <p className="text-xs text-rose-500" role="alert">{passwordChangeError}</p>
+              )}
+              <p className={`text-[11px] leading-relaxed ${textMuted}`} role="status">
+                Other active sessions will be signed out after the change.
+              </p>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={passwordChanging}
+                  onClick={() => setShowPasswordChange(false)}
+                  className={`rounded-lg border px-4 py-2.5 text-xs font-semibold ${bgSurface}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={passwordChanging}
+                  className="rounded-lg bg-[#E50914] px-4 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {passwordChanging ? "Changing..." : "Change password"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </header>
   );
 }

@@ -8,93 +8,92 @@ datasource db {
 }
 
 model Organisation {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  users                             User[]
-  customers                         Customer[]
-  invoices                          Invoice[]
-  receipts                          Receipt[]
-  paymentAllocations                ReceiptAllocation[]
-  creditAdjustments                 CreditAdjustment[]
-  tasks                             Task[]
-  taskHistories                     TaskHistory[]
-  promises                          PromiseToPay[]
-  disputes                          Dispute[]
-  communications                    Communication[]
-  reminderTemplates                 ReminderTemplate[]
-  reminders                         Reminder[]
-  subscriptions                     Subscription[]
-  customerNotifications             CustomerNotification[]
-  billingPayments                   BillingPayment[]
-  billingInvoices                   BillingInvoice[]
-  razorpayWebhookEvents             RazorpayWebhookEvent[]
-  auditLogs                         AuditLog[]
+  id                                String                             @id @default(uuid())
+  name                              String
+  createdAt                         DateTime                           @default(now())
+  updatedAt                         DateTime                           @updatedAt
   adminNotificationReads            AdminNotificationRead[]
-  customerSubscriptionPlans         CustomerSubscriptionPlan[]
+  auditLogs                         AuditLog[]
+  billingInvoices                   BillingInvoice[]
+  billingPayments                   BillingPayment[]
+  billingPaymentReceipts            BillingPaymentReceipt[]
+  communications                    Communication[]
+  creditAdjustments                 CreditAdjustment[]
+  customers                         Customer[]
+  customerAssistantMessages         CustomerAssistantMessage[]
+  customerNotifications             CustomerNotification[]
   customerSubscriptions             CustomerSubscription[]
-  customerSubscriptionPayments      CustomerSubscriptionPayment[]
   customerSubscriptionInvoices      CustomerSubscriptionInvoice[]
+  customerSubscriptionPayments      CustomerSubscriptionPayment[]
+  customerSubscriptionPlans         CustomerSubscriptionPlan[]
   customerSubscriptionReceipts      CustomerSubscriptionReceipt[]
   customerSubscriptionWebhookEvents CustomerSubscriptionWebhookEvent[]
-  customerAssistantMessages         CustomerAssistantMessage[]
+  disputes                          Dispute[]
+  invoices                          Invoice[]
+  promises                          PromiseToPay[]
+  razorpayWebhookEvents             RazorpayWebhookEvent[]
+  receipts                          Receipt[]
+  paymentAllocations                ReceiptAllocation[]
+  reminders                         Reminder[]
+  reminderTemplates                 ReminderTemplate[]
+  subscriptions                     Subscription[]
+  tasks                             Task[]
+  taskHistories                     TaskHistory[]
+  users                             User[]
 }
 
 model User {
-  id             String   @id @default(uuid())
-  name           String
-  email          String
-  password       String
-  role           String   @default("USER")
-  organisationId String
-  createdAt      DateTime @default(now())
-
-  organisation Organisation @relation(fields: [organisationId], references: [id])
+  id                     String                  @id @default(uuid())
+  name                   String
+  email                  String
+  password               String
+  role                   String                  @default("USER")
+  organisationId         String
+  createdAt              DateTime                @default(now())
+  sessionVersion         Int                     @default(0)
   adminNotificationReads AdminNotificationRead[]
+  organisation           Organisation            @relation(fields: [organisationId], references: [id])
 
   @@unique([email, organisationId])
 }
 
 model Customer {
-  id              String   @id @default(uuid())
-  customerCode    String?
-  name            String
-  type            String   @default("BUSINESS")
-  contactPerson   String?
-  email           String?
-  phone           String?
-  billingAddress  String?
-  shippingAddress String?
-  taxRegistration String?
-  paymentTerms    String?
-  creditLimit     Decimal? @db.Decimal(14, 2)
-  status          String   @default("ACTIVE")
-  riskLevel       String   @default("LOW")
-  notes           String?
-
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
+  id                        String                             @id @default(uuid())
+  customerCode              String?
+  name                      String
+  type                      String                             @default("BUSINESS")
+  contactPerson             String?
+  email                     String?
+  phone                     String?
+  billingAddress            String?
+  shippingAddress           String?
+  taxRegistration           String?
+  paymentTerms              String?
+  creditLimit               Decimal?                           @db.Decimal(14, 2)
+  status                    String                             @default("ACTIVE")
+  notes                     String?
+  organisationId            String
   createdAt                 DateTime                           @default(now())
   updatedAt                 DateTime                           @updatedAt
-  invoices                  Invoice[]
-  receipts                  Receipt[]
-  tasks                     Task[]
-  promises                  PromiseToPay[]
-  disputes                  Dispute[]
+  riskLevel                 String                             @default("LOW")
   communications            Communication[]
-  reminders                 Reminder[]
-  portalAccount             CustomerPortalAccount?
+  organisation              Organisation                       @relation(fields: [organisationId], references: [id])
+  assistantMessages         CustomerAssistantMessage[]
   notifications             CustomerNotification[]
-  emailDeliveryAttempts     EmailDeliveryAttempt[]
+  portalAccount             CustomerPortalAccount?
   subscriptions             CustomerSubscription[]
-  subscriptionPayments      CustomerSubscriptionPayment[]
   subscriptionInvoices      CustomerSubscriptionInvoice[]
+  subscriptionPayments      CustomerSubscriptionPayment[]
+  billingPayments            BillingPayment[]
   subscriptionReceipts      CustomerSubscriptionReceipt[]
   subscriptionWebhookEvents CustomerSubscriptionWebhookEvent[]
-  assistantMessages          CustomerAssistantMessage[]
+  disputes                  Dispute[]
+  emailDeliveryAttempts     EmailDeliveryAttempt[]
+  invoices                  Invoice[]
+  promises                  PromiseToPay[]
+  receipts                  Receipt[]
+  reminders                 Reminder[]
+  tasks                     Task[]
 
   @@unique([customerCode, organisationId])
   @@index([organisationId])
@@ -104,40 +103,35 @@ model Customer {
 }
 
 model Invoice {
-  id            String   @id @default(uuid())
-  invoiceNumber String
-  invoiceDate   DateTime
-  dueDate       DateTime
-
-  currency String  @default("INR")
-  subtotal Decimal @db.Decimal(14, 2)
-  tax      Decimal @default(0) @db.Decimal(14, 2)
-  discount Decimal @default(0) @db.Decimal(14, 2)
-  total    Decimal @db.Decimal(14, 2)
-
-  assignedExecutive String?
-  salesperson       String?
-  status            String  @default("DRAFT")
-  documentUrl       String?
-  notes             String?
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
+  id                    String                 @id @default(uuid())
+  invoiceNumber         String
+  invoiceDate           DateTime
+  dueDate               DateTime
+  currency              String                 @default("INR")
+  subtotal              Decimal                @db.Decimal(14, 2)
+  tax                   Decimal                @default(0) @db.Decimal(14, 2)
+  discount              Decimal                @default(0) @db.Decimal(14, 2)
+  total                 Decimal                @db.Decimal(14, 2)
+  assignedExecutive     String?
+  salesperson           String?
+  status                String                 @default("DRAFT")
+  documentUrl           String?
+  notes                 String?
+  customerId            String
+  organisationId        String
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
-  allocations           ReceiptAllocation[]
-  creditAdjustments     CreditAdjustment[]
-  tasks                 Task[]
-  promises              PromiseToPay[]
-  disputes              Dispute[]
   communications        Communication[]
-  reminders             Reminder[]
+  creditAdjustments     CreditAdjustment[]
   customerNotifications CustomerNotification[]
+  disputes              Dispute[]
   emailDeliveryAttempts EmailDeliveryAttempt[]
+  customer              Customer               @relation(fields: [customerId], references: [id])
+  organisation          Organisation           @relation(fields: [organisationId], references: [id])
+  promises              PromiseToPay[]
+  allocations           ReceiptAllocation[]
+  reminders             Reminder[]
+  tasks                 Task[]
 
   @@unique([invoiceNumber, organisationId])
   @@index([organisationId])
@@ -146,30 +140,25 @@ model Invoice {
 }
 
 model Receipt {
-  id            String   @id @default(uuid())
-  receiptNumber String
-  receiptDate   DateTime
-  amount        Decimal  @db.Decimal(14, 2)
-  currency      String   @default("INR")
-
-  paymentMethod        String
-  transactionReference String?
-  notes                String?
-  documentUrl          String?
-  status               String  @default("POSTED")
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  allocations           ReceiptAllocation[]
+  id                    String                 @id @default(uuid())
+  receiptNumber         String
+  receiptDate           DateTime
+  amount                Decimal                @db.Decimal(14, 2)
+  currency              String                 @default("INR")
+  paymentMethod         String
+  transactionReference  String?
+  notes                 String?
+  documentUrl           String?
+  status                String                 @default("POSTED")
+  customerId            String
+  organisationId        String
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
   customerNotifications CustomerNotification[]
   emailDeliveryAttempts EmailDeliveryAttempt[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  customer              Customer               @relation(fields: [customerId], references: [id])
+  organisation          Organisation           @relation(fields: [organisationId], references: [id])
+  allocations           ReceiptAllocation[]
 
   @@unique([receiptNumber, organisationId])
   @@index([organisationId])
@@ -178,24 +167,19 @@ model Receipt {
 }
 
 model ReceiptAllocation {
-  id     String  @id @default(uuid())
-  amount Decimal @db.Decimal(14, 2)
-
-  receiptId String
-  receipt   Receipt @relation(fields: [receiptId], references: [id])
-
-  invoiceId String
-  invoice   Invoice @relation(fields: [invoiceId], references: [id])
-
+  id             String       @id @default(uuid())
+  amount         Decimal      @db.Decimal(14, 2)
+  receiptId      String
+  invoiceId      String
   organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  status         String    @default("POSTED")
+  status         String       @default("POSTED")
   reversedAt     DateTime?
   reversalReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  invoice        Invoice      @relation(fields: [invoiceId], references: [id])
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  receipt        Receipt      @relation(fields: [receiptId], references: [id])
 
   @@index([organisationId])
   @@index([receiptId])
@@ -203,35 +187,27 @@ model ReceiptAllocation {
 }
 
 model Task {
-  id          String  @id @default(uuid())
-  title       String
-  description String?
-
-  taskType String @default("CALL")
-  priority String @default("MEDIUM")
-  status   String @default("PENDING")
-
+  id                String         @id @default(uuid())
+  title             String
+  description       String?
+  taskType          String         @default("CALL")
+  priority          String         @default("MEDIUM")
+  status            String         @default("PENDING")
   dueDate           DateTime
   assignedExecutive String?
-
-  outcome    String?
-  notes      String?
-  nextAction String?
-
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  invoiceId String?
-  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
-
-  histories TaskHistory[]
-
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  promises  PromiseToPay[]
+  outcome           String?
+  notes             String?
+  nextAction        String?
+  organisationId    String
+  customerId        String
+  invoiceId         String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  promises          PromiseToPay[]
+  customer          Customer       @relation(fields: [customerId], references: [id])
+  invoice           Invoice?       @relation(fields: [invoiceId], references: [id])
+  organisation      Organisation   @relation(fields: [organisationId], references: [id])
+  histories         TaskHistory[]
 
   @@index([organisationId])
   @@index([customerId])
@@ -241,47 +217,37 @@ model Task {
 }
 
 model TaskHistory {
-  id         String  @id @default(uuid())
-  outcome    String
-  notes      String?
-  nextAction String?
-
-  taskId String
-  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
-
+  id             String       @id @default(uuid())
+  outcome        String
+  notes          String?
+  nextAction     String?
+  taskId         String
   organisationId String
+  createdAt      DateTime     @default(now())
   organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  createdAt DateTime @default(now())
+  task           Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
   @@index([organisationId])
 }
 
 model PromiseToPay {
-  id String @id @default(uuid())
-
-  promisedAmount Decimal  @db.Decimal(14, 2)
+  id             String       @id @default(uuid())
+  promisedAmount Decimal      @db.Decimal(14, 2)
   promisedDate   DateTime
-
-  status     String  @default("PROMISED")
-  notes      String?
-  recordedBy String?
-
+  status         String       @default("PROMISED")
+  notes          String?
+  recordedBy     String?
   organisationId String
+  customerId     String
+  invoiceId      String
+  taskId         String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  invoice        Invoice      @relation(fields: [invoiceId], references: [id])
   organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  invoiceId String
-  invoice   Invoice @relation(fields: [invoiceId], references: [id])
-
-  taskId String?
-  task   Task?   @relation(fields: [taskId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  task           Task?        @relation(fields: [taskId], references: [id])
 
   @@index([organisationId])
   @@index([customerId])
@@ -291,31 +257,24 @@ model PromiseToPay {
 }
 
 model Dispute {
-  id String @id @default(uuid())
-
+  id             String       @id @default(uuid())
   disputeNumber  String?
   reason         String
   description    String
-  disputedAmount Decimal? @db.Decimal(14, 2)
-
-  status   String @default("OPEN")
-  priority String @default("MEDIUM")
-
-  resolution String?
-  resolvedAt DateTime?
-  recordedBy String?
-
+  disputedAmount Decimal?     @db.Decimal(14, 2)
+  status         String       @default("OPEN")
+  priority       String       @default("MEDIUM")
+  resolution     String?
+  resolvedAt     DateTime?
+  recordedBy     String?
   organisationId String
+  customerId     String
+  invoiceId      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  invoice        Invoice      @relation(fields: [invoiceId], references: [id])
   organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  invoiceId String
-  invoice   Invoice @relation(fields: [invoiceId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
   @@unique([disputeNumber, organisationId])
   @@index([organisationId])
@@ -326,29 +285,23 @@ model Dispute {
 }
 
 model Communication {
-  id String @id @default(uuid())
-
+  id             String       @id @default(uuid())
   channel        String
-  direction      String  @default("OUTBOUND")
+  direction      String       @default("OUTBOUND")
   subject        String?
   message        String
   outcome        String?
-  deliveryStatus String  @default("RECORDED")
-
-  occurredAt DateTime @default(now())
-  recordedBy String?
-
+  deliveryStatus String       @default("RECORDED")
+  occurredAt     DateTime     @default(now())
+  recordedBy     String?
   organisationId String
+  customerId     String
+  invoiceId      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  invoice        Invoice?     @relation(fields: [invoiceId], references: [id])
   organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  invoiceId String?
-  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
   @@index([organisationId])
   @@index([customerId])
@@ -358,22 +311,18 @@ model Communication {
 }
 
 model ReminderTemplate {
-  id String @id @default(uuid())
-
-  name         String
-  triggerStage String
-  channel      String
-  subject      String?
-  body         String
-  isActive     Boolean @default(true)
-
+  id             String       @id @default(uuid())
+  name           String
+  triggerStage   String
+  channel        String
+  subject        String?
+  body           String
+  isActive       Boolean      @default(true)
   organisationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  reminders      Reminder[]
   organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  reminders Reminder[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
   @@unique([name, organisationId])
   @@index([organisationId])
@@ -381,37 +330,31 @@ model ReminderTemplate {
 }
 
 model Reminder {
-  id String @id @default(uuid())
-
-  scheduledFor   DateTime
-  sentAt         DateTime?
-  status         String    @default("PENDING")
-  channel        String
-  subject        String?
-  message        String
-  dedupeKey      String
-  deliveryStatus String    @default("PENDING")
-  attemptCount   Int       @default(0)
-  nextAttemptAt  DateTime?
-  lastError      String?
-
-  createdBy String?
-
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  invoiceId String?
-  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
-
+  id                   String                @id @default(uuid())
+  scheduledFor         DateTime
+  sentAt               DateTime?
+  status               String                @default("PENDING")
+  channel              String
+  subject              String?
+  message              String
+  dedupeKey            String
+  deliveryStatus       String                @default("PENDING")
+  createdBy            String?
+  organisationId       String
+  customerId           String
+  invoiceId            String?
   templateId           String?
-  template             ReminderTemplate?     @relation(fields: [templateId], references: [id])
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  attemptCount         Int                   @default(0)
+  lastError            String?
+  nextAttemptAt        DateTime?
   customerNotification CustomerNotification?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  emailDeliveryAttempt EmailDeliveryAttempt?
+  customer             Customer              @relation(fields: [customerId], references: [id])
+  invoice              Invoice?              @relation(fields: [invoiceId], references: [id])
+  organisation         Organisation          @relation(fields: [organisationId], references: [id])
+  template             ReminderTemplate?     @relation(fields: [templateId], references: [id])
 
   @@unique([organisationId, dedupeKey])
   @@index([organisationId])
@@ -422,65 +365,55 @@ model Reminder {
 }
 
 model SubscriptionPlan {
-  id          String  @id @default(uuid())
-  name        String
-  code        String  @unique
-  description String?
-
-  // Proposed commercial terms do not become purchasable until explicitly approved.
-  proposedMonthlyPrice  Decimal?  @db.Decimal(14, 2)
-  proposedYearlyPrice   Decimal?  @db.Decimal(14, 2)
-  monthlyPrice          Decimal?  @db.Decimal(14, 2)
-  yearlyPrice           Decimal?  @db.Decimal(14, 2)
-  currency              String    @default("INR")
-  pricingStatus         String    @default("PENDING_APPROVAL")
-  pricingProposalStatus String    @default("PENDING_APPROVAL")
-  pricingApprovedAt     DateTime?
-  pricingApprovedBy     String?
-
-  // These values are the active caps; null is unlimited only after approval.
-  proposedMaxUsers            Int?
-  proposedMaxCustomers        Int?
-  proposedMaxInvoicesPerMonth Int?
+  id                          String           @id @default(uuid())
+  name                        String
+  code                        String           @unique
+  description                 String?
+  monthlyPrice                Decimal?         @db.Decimal(14, 2)
+  yearlyPrice                 Decimal?         @db.Decimal(14, 2)
+  currency                    String           @default("INR")
   maxUsers                    Int?
   maxCustomers                Int?
   maxInvoicesPerMonth         Int?
-  limitsStatus                String    @default("PENDING_APPROVAL")
-  limitsProposalStatus        String    @default("PENDING_APPROVAL")
+  isActive                    Boolean          @default(false)
+  createdAt                   DateTime         @default(now())
+  updatedAt                   DateTime         @updatedAt
+  proposedMonthlyPrice        Decimal?         @db.Decimal(14, 2)
+  proposedYearlyPrice         Decimal?         @db.Decimal(14, 2)
+  pricingStatus               String           @default("PENDING_APPROVAL")
+  pricingApprovedAt           DateTime?
+  pricingApprovedBy           String?
+  proposedMaxUsers            Int?
+  proposedMaxCustomers        Int?
+  proposedMaxInvoicesPerMonth Int?
+  limitsStatus                String           @default("PENDING_APPROVAL")
   limitsApprovedAt            DateTime?
   limitsApprovedBy            String?
-
-  isActive  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  subscriptions   Subscription[]
-  billingPayments BillingPayment[]
+  pricingProposalStatus       String           @default("PENDING_APPROVAL")
+  limitsProposalStatus        String           @default("PENDING_APPROVAL")
+  billingPayments             BillingPayment[]
+  subscriptions               Subscription[]
 
   @@index([isActive])
 }
 
 model Subscription {
-  id             String @id @default(uuid())
+  id             String           @id @default(uuid())
   organisationId String
   planId         String
-
-  status       String @default("ACTIVE")
-  billingCycle String @default("MONTHLY")
-
-  startsAt      DateTime  @default(now())
-  endsAt        DateTime?
-  trialEndsAt   DateTime?
-  cancelledAt   DateTime?
-  billingAmount Decimal?  @db.Decimal(14, 2)
-  currency      String    @default("INR")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  organisation Organisation     @relation(fields: [organisationId], references: [id])
-  plan         SubscriptionPlan @relation(fields: [planId], references: [id])
-  payment      BillingPayment?
+  status         String           @default("ACTIVE")
+  billingCycle   String           @default("MONTHLY")
+  startsAt       DateTime         @default(now())
+  endsAt         DateTime?
+  trialEndsAt    DateTime?
+  cancelledAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  billingAmount  Decimal?         @db.Decimal(14, 2)
+  currency       String           @default("INR")
+  payment        BillingPayment?
+  organisation   Organisation     @relation(fields: [organisationId], references: [id])
+  plan           SubscriptionPlan @relation(fields: [planId], references: [id])
 
   @@index([organisationId])
   @@index([planId])
@@ -489,155 +422,166 @@ model Subscription {
 }
 
 model BillingPayment {
-  id                String    @id @default(uuid())
+  id                String                 @id @default(uuid())
   organisationId    String
+  customerId        String?
   planId            String
-  subscriptionId    String?   @unique
+  subscriptionId    String?                @unique
   billingCycle      String
-  amount            Decimal   @db.Decimal(14, 2)
-  currency          String    @default("INR")
-  status            String    @default("CREATING")
+  amount            Decimal                @db.Decimal(14, 2)
+  currency          String                 @default("INR")
+  status            String                 @default("CREATING")
   idempotencyKey    String
-  razorpayOrderId   String?   @unique
-  razorpayPaymentId String?   @unique
+  razorpayOrderId   String?                @unique
+  razorpayPaymentId String?                @unique
   effectiveAt       DateTime
   periodEndsAt      DateTime
   paidAt            DateTime?
   createdBy         String?
   errorCode         String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  organisation  Organisation           @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  plan          SubscriptionPlan       @relation(fields: [planId], references: [id], onDelete: Restrict)
-  subscription  Subscription?          @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  invoice       BillingInvoice?
-  webhookEvents RazorpayWebhookEvent[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  invoice           BillingInvoice?
+  receipt           BillingPaymentReceipt?
+  emailDeliveryAttempts EmailDeliveryAttempt[]
+  customer          Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  organisation      Organisation           @relation(fields: [organisationId], references: [id])
+  plan              SubscriptionPlan       @relation(fields: [planId], references: [id])
+  subscription      Subscription?          @relation(fields: [subscriptionId], references: [id])
+  webhookEvents     RazorpayWebhookEvent[]
 
   @@unique([organisationId, idempotencyKey])
   @@index([organisationId, status, createdAt])
   @@index([effectiveAt])
+  @@index([customerId])
 }
 
 model BillingInvoice {
-  id             String   @id @default(uuid())
+  id             String         @id @default(uuid())
   organisationId String
-  paymentId      String   @unique
+  paymentId      String         @unique
   invoiceNumber  String
   planName       String
   billingCycle   String
-  amount         Decimal  @db.Decimal(14, 2)
-  currency       String   @default("INR")
+  amount         Decimal        @db.Decimal(14, 2)
+  currency       String         @default("INR")
   periodStart    DateTime
   periodEnd      DateTime
-  createdAt      DateTime @default(now())
-
-  organisation Organisation   @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  payment      BillingPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  createdAt      DateTime       @default(now())
+  organisation   Organisation   @relation(fields: [organisationId], references: [id])
+  payment        BillingPayment @relation(fields: [paymentId], references: [id])
 
   @@unique([organisationId, invoiceNumber])
   @@index([organisationId, createdAt])
 }
 
+model BillingPaymentReceipt {
+  id              String         @id @default(uuid())
+  organisationId  String
+  paymentId       String         @unique
+  receiptNumber   String
+  pdfBytes        Bytes
+  pdfSha256       String
+  createdAt       DateTime       @default(now())
+  organisation    Organisation   @relation(fields: [organisationId], references: [id])
+  payment         BillingPayment @relation(fields: [paymentId], references: [id])
+
+  @@unique([organisationId, receiptNumber])
+  @@index([organisationId, createdAt])
+}
+
 model RazorpayWebhookEvent {
-  id               String    @id @default(uuid())
+  id               String          @id @default(uuid())
   organisationId   String?
   billingPaymentId String?
-  providerEventId  String    @unique
+  providerEventId  String          @unique
   eventType        String
-  status           String    @default("RECEIVED")
-  receivedAt       DateTime  @default(now())
+  status           String          @default("RECEIVED")
+  receivedAt       DateTime        @default(now())
   processedAt      DateTime?
   errorCode        String?
-
-  organisation   Organisation?   @relation(fields: [organisationId], references: [id], onDelete: SetNull)
-  billingPayment BillingPayment? @relation(fields: [billingPaymentId], references: [id], onDelete: SetNull)
+  billingPayment   BillingPayment? @relation(fields: [billingPaymentId], references: [id])
+  organisation     Organisation?   @relation(fields: [organisationId], references: [id])
 
   @@index([status, receivedAt])
   @@index([billingPaymentId])
 }
 
 model AuditLog {
-  id             String   @id @default(uuid())
+  id             String        @id @default(uuid())
   organisationId String?
   actorUserId    String?
   action         String
   entityType     String
   entityId       String?
   metadata       Json?
-  createdAt      DateTime @default(now())
-
-  organisation Organisation? @relation(fields: [organisationId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  organisation   Organisation? @relation(fields: [organisationId], references: [id])
 
   @@index([organisationId, createdAt])
   @@index([entityType, entityId])
 }
 
 model CustomerSubscriptionPlan {
-  id             String  @id @default(uuid())
-  organisationId String
-  code           String
-  name           String
-  description    String?
-
-  proposedMonthlyPrice  Decimal?  @db.Decimal(14, 2)
-  proposedQuarterlyPrice Decimal? @db.Decimal(14, 2)
-  proposedHalfYearlyPrice Decimal? @db.Decimal(14, 2)
-  proposedYearlyPrice   Decimal?  @db.Decimal(14, 2)
-  monthlyPrice          Decimal?  @db.Decimal(14, 2)
-  quarterlyPrice        Decimal?  @db.Decimal(14, 2)
-  halfYearlyPrice       Decimal?  @db.Decimal(14, 2)
-  yearlyPrice           Decimal?  @db.Decimal(14, 2)
-  currency              String    @default("INR")
-  features              String[]  @default([])
-  usageLimits           Json      @default("{}")
-  eligibleCustomerTypes String[]  @default([])
-  pricingStatus         String    @default("PENDING_APPROVAL")
-  pricingProposalStatus String    @default("PENDING_APPROVAL")
-  pricingApprovedAt     DateTime?
-  pricingApprovedBy     String?
-
-  proposedTaxTerms  String?
-  taxTerms          String?
-  taxTermsStatus    String    @default("PENDING_APPROVAL")
-  taxProposalStatus String    @default("PENDING_APPROVAL")
-  taxApprovedAt     DateTime?
-  taxApprovedBy     String?
-
-  isActive  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  organisation  Organisation                  @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  subscriptions CustomerSubscription[]
-  payments      CustomerSubscriptionPayment[]
+  id                      String                        @id @default(uuid())
+  organisationId          String
+  code                    String
+  name                    String
+  description             String?
+  proposedMonthlyPrice    Decimal?                      @db.Decimal(14, 2)
+  proposedYearlyPrice     Decimal?                      @db.Decimal(14, 2)
+  monthlyPrice            Decimal?                      @db.Decimal(14, 2)
+  yearlyPrice             Decimal?                      @db.Decimal(14, 2)
+  currency                String                        @default("INR")
+  pricingStatus           String                        @default("PENDING_APPROVAL")
+  pricingProposalStatus   String                        @default("PENDING_APPROVAL")
+  pricingApprovedAt       DateTime?
+  pricingApprovedBy       String?
+  proposedTaxTerms        String?
+  taxTerms                String?
+  taxTermsStatus          String                        @default("PENDING_APPROVAL")
+  taxProposalStatus       String                        @default("PENDING_APPROVAL")
+  taxApprovedAt           DateTime?
+  taxApprovedBy           String?
+  isActive                Boolean                       @default(false)
+  createdAt               DateTime                      @default(now())
+  updatedAt               DateTime                      @updatedAt
+  proposedQuarterlyPrice  Decimal?                      @db.Decimal(14, 2)
+  proposedHalfYearlyPrice Decimal?                      @db.Decimal(14, 2)
+  quarterlyPrice          Decimal?                      @db.Decimal(14, 2)
+  halfYearlyPrice         Decimal?                      @db.Decimal(14, 2)
+  features                String[]                      @default([])
+  usageLimits             Json                          @default("{}")
+  eligibleCustomerTypes   String[]                      @default([])
+  subscriptions           CustomerSubscription[]
+  payments                CustomerSubscriptionPayment[]
+  organisation            Organisation                  @relation(fields: [organisationId], references: [id])
 
   @@unique([organisationId, code])
   @@index([organisationId, isActive])
 }
 
 model CustomerSubscription {
-  id                     String    @id @default(uuid())
+  id                     String                       @id @default(uuid())
   organisationId         String
   customerId             String
   planId                 String
   replacesSubscriptionId String?
-  status                 String    @default("PENDING")
+  status                 String                       @default("PENDING")
   billingCycle           String
   startsAt               DateTime
   renewalAt              DateTime
   endsAt                 DateTime
-  cancelAtPeriodEnd      Boolean   @default(false)
+  cancelAtPeriodEnd      Boolean                      @default(false)
   cancelledAt            DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
-
-  organisation Organisation                 @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  customer     Customer                     @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  plan         CustomerSubscriptionPlan     @relation(fields: [planId], references: [id], onDelete: Restrict)
-  payment      CustomerSubscriptionPayment?
-  replaces     CustomerSubscription?        @relation("CustomerSubscriptionReplacement", fields: [replacesSubscriptionId], references: [id], onDelete: SetNull)
-  replacedBy   CustomerSubscription[]       @relation("CustomerSubscriptionReplacement")
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+  customer               Customer                     @relation(fields: [customerId], references: [id])
+  organisation           Organisation                 @relation(fields: [organisationId], references: [id])
+  plan                   CustomerSubscriptionPlan     @relation(fields: [planId], references: [id])
+  replaces               CustomerSubscription?        @relation("CustomerSubscriptionReplacement", fields: [replacesSubscriptionId], references: [id])
+  replacedBy             CustomerSubscription[]       @relation("CustomerSubscriptionReplacement")
+  payment                CustomerSubscriptionPayment?
 
   @@index([organisationId, customerId, status], map: "CustomerSubscription_org_customer_status_idx")
   @@index([planId])
@@ -645,35 +589,34 @@ model CustomerSubscription {
 }
 
 model CustomerSubscriptionPayment {
-  id                String    @id @default(uuid())
+  id                String                             @id @default(uuid())
   organisationId    String
   customerId        String
   planId            String
-  subscriptionId    String    @unique
+  subscriptionId    String                             @unique
   planName          String
   billingCycle      String
-  amount            Decimal   @db.Decimal(14, 2)
-  currency          String    @default("INR")
+  amount            Decimal                            @db.Decimal(14, 2)
+  currency          String                             @default("INR")
   taxTerms          String
-  status            String    @default("CREATING")
+  status            String                             @default("CREATING")
   idempotencyKey    String
-  razorpayOrderId   String?   @unique
-  razorpayPaymentId String?   @unique
-  paymentMethod     String?
+  razorpayOrderId   String?                            @unique
+  razorpayPaymentId String?                            @unique
   periodStart       DateTime
   periodEnd         DateTime
   paidAt            DateTime?
   errorCode         String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  organisation  Organisation                       @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  customer      Customer                           @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  plan          CustomerSubscriptionPlan           @relation(fields: [planId], references: [id], onDelete: Restrict)
-  subscription  CustomerSubscription               @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
-  invoice       CustomerSubscriptionInvoice?
-  receipt       CustomerSubscriptionReceipt?
-  webhookEvents CustomerSubscriptionWebhookEvent[]
+  createdAt         DateTime                           @default(now())
+  updatedAt         DateTime                           @updatedAt
+  paymentMethod     String?
+  invoice           CustomerSubscriptionInvoice?
+  customer          Customer                           @relation(fields: [customerId], references: [id])
+  organisation      Organisation                       @relation(fields: [organisationId], references: [id])
+  plan              CustomerSubscriptionPlan           @relation(fields: [planId], references: [id])
+  subscription      CustomerSubscription               @relation(fields: [subscriptionId], references: [id])
+  receipt           CustomerSubscriptionReceipt?
+  webhookEvents     CustomerSubscriptionWebhookEvent[]
 
   @@unique([organisationId, customerId, idempotencyKey], map: "CustomerSubscriptionPayment_org_customer_idem_key")
   @@index([organisationId, customerId, status, createdAt], map: "CustomerSubscriptionPayment_org_customer_status_idx")
@@ -681,108 +624,104 @@ model CustomerSubscriptionPayment {
 }
 
 model CustomerSubscriptionInvoice {
-  id             String   @id @default(uuid())
+  id             String                      @id @default(uuid())
   organisationId String
   customerId     String
-  paymentId      String   @unique
+  paymentId      String                      @unique
   invoiceNumber  String
   planName       String
   billingCycle   String
-  amount         Decimal  @db.Decimal(14, 2)
-  currency       String   @default("INR")
+  amount         Decimal                     @db.Decimal(14, 2)
+  currency       String                      @default("INR")
   taxTerms       String
   periodStart    DateTime
   periodEnd      DateTime
-  createdAt      DateTime @default(now())
-
-  organisation Organisation                @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  customer     Customer                    @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  payment      CustomerSubscriptionPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  createdAt      DateTime                    @default(now())
+  customer       Customer                    @relation(fields: [customerId], references: [id])
+  organisation   Organisation                @relation(fields: [organisationId], references: [id])
+  payment        CustomerSubscriptionPayment @relation(fields: [paymentId], references: [id])
 
   @@unique([organisationId, invoiceNumber], map: "CustomerSubscriptionInvoice_org_invoice_key")
   @@index([organisationId, customerId, createdAt], map: "CustomerSubscriptionInvoice_org_customer_created_idx")
 }
 
 model CustomerSubscriptionReceipt {
-  id             String   @id @default(uuid())
-  organisationId String
-  customerId     String
-  paymentId      String   @unique
-  receiptNumber  String
-  amount         Decimal  @db.Decimal(14, 2)
-  currency       String   @default("INR")
-  paidAt         DateTime
-  createdAt      DateTime @default(now())
-
-  organisation Organisation                @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  customer     Customer                    @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  payment      CustomerSubscriptionPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  id                    String                      @id @default(uuid())
+  organisationId        String
+  customerId            String
+  paymentId             String                      @unique
+  receiptNumber         String
+  transactionId         String?                     @unique
+  customerName          String?
+  customerEmail         String?
+  paymentMethod         String?
+  verificationTokenHash String?                     @unique
+  pdfBytes              Bytes?
+  pdfSha256             String?
+  amount                Decimal                     @db.Decimal(14, 2)
+  currency              String                      @default("INR")
+  paidAt                DateTime
+  createdAt             DateTime                    @default(now())
+  customer              Customer                    @relation(fields: [customerId], references: [id])
+  organisation          Organisation                @relation(fields: [organisationId], references: [id])
+  payment               CustomerSubscriptionPayment @relation(fields: [paymentId], references: [id])
+  emailDeliveryAttempts EmailDeliveryAttempt[]
 
   @@unique([organisationId, receiptNumber], map: "CustomerSubscriptionReceipt_org_receipt_key")
   @@index([organisationId, customerId, createdAt], map: "CustomerSubscriptionReceipt_org_customer_created_idx")
 }
 
 model CustomerSubscriptionWebhookEvent {
-  id              String    @id @default(uuid())
+  id              String                       @id @default(uuid())
   organisationId  String?
   customerId      String?
   paymentId       String?
-  providerEventId String    @unique
+  providerEventId String                       @unique
   eventType       String
-  status          String    @default("RECEIVED")
-  receivedAt      DateTime  @default(now())
+  status          String                       @default("RECEIVED")
+  receivedAt      DateTime                     @default(now())
   processedAt     DateTime?
   errorCode       String?
-
-  organisation Organisation?                @relation(fields: [organisationId], references: [id], onDelete: SetNull)
-  customer     Customer?                    @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  payment      CustomerSubscriptionPayment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  customer        Customer?                    @relation(fields: [customerId], references: [id])
+  organisation    Organisation?                @relation(fields: [organisationId], references: [id])
+  payment         CustomerSubscriptionPayment? @relation(fields: [paymentId], references: [id])
 
   @@index([status, receivedAt])
   @@index([paymentId])
 }
 
 model CustomerAssistantMessage {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   organisationId String
   customerId     String
   role           String
-  content        String   @db.Text
-  createdAt      DateTime @default(now())
+  content        String
+  createdAt      DateTime     @default(now())
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
-  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([organisationId, customerId, createdAt])
+  @@index([organisationId, customerId, createdAt], map: "CustomerAssistantMessage_organisationId_customerId_createdAt_id")
 }
 
 model CreditAdjustment {
-  id String @id @default(uuid())
-
+  id               String       @id @default(uuid())
   adjustmentNumber String
-  amount           Decimal @db.Decimal(14, 2)
+  amount           Decimal      @db.Decimal(14, 2)
   reason           String
   notes            String?
-
-  // PENDING, APPROVED, REJECTED
-  status String @default("PENDING")
-
-  createdBy  String?
-  approvedBy String?
-  approvedAt DateTime?
-
-  rejectedBy      String?
-  rejectedAt      DateTime?
-  rejectionReason String?
-
-  invoiceId String
-  invoice   Invoice @relation(fields: [invoiceId], references: [id])
-
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status           String       @default("PENDING")
+  createdBy        String?
+  approvedBy       String?
+  approvedAt       DateTime?
+  rejectedBy       String?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  invoiceId        String
+  organisationId   String
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  invoice          Invoice      @relation(fields: [invoiceId], references: [id])
+  organisation     Organisation @relation(fields: [organisationId], references: [id])
 
   @@unique([adjustmentNumber, organisationId])
   @@index([organisationId])
@@ -791,92 +730,96 @@ model CreditAdjustment {
 }
 
 model CustomerPortalAccount {
-  id                          String    @id @default(uuid())
-  customerId                  String    @unique
-  email                       String    @unique
+  id                          String                 @id @default(uuid())
+  customerId                  String                 @unique
+  email                       String                 @unique
   fullName                    String
   passwordHash                String
   emailVerifiedAt             DateTime?
-  verificationOtpHash         String?
-  verificationOtpExpiresAt    DateTime?
-  verificationOtpAttemptCount Int       @default(0)
   verificationOtpSentAt       DateTime?
-  passwordResetTokenHash      String?   @unique
+  passwordResetTokenHash      String?                @unique
   passwordResetExpiresAt      DateTime?
   passwordResetSentAt         DateTime?
-  sessionVersion              Int       @default(0)
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
-
-  customer              Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  notifications         CustomerNotification[]
-  emailDeliveryAttempts EmailDeliveryAttempt[]
+  sessionVersion              Int                    @default(0)
+  timeZone                    String                 @default("Asia/Kolkata")
+  createdAt                   DateTime               @default(now())
+  updatedAt                   DateTime               @updatedAt
+  verificationOtpHash         String?
+  verificationOtpExpiresAt    DateTime?
+  verificationOtpAttemptCount Int                    @default(0)
+  notifications               CustomerNotification[]
+  customer                    Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  emailDeliveryAttempts       EmailDeliveryAttempt[]
 
   @@index([emailVerifiedAt])
 }
 
 model CustomerNotification {
-  id             String    @id @default(uuid())
+  id             String                 @id @default(uuid())
   customerId     String
   organisationId String
   invoiceId      String?
   receiptId      String?
-  reminderId     String?   @unique
+  reminderId     String?                @unique
   eventType      String
   title          String
   message        String
   readAt         DateTime?
-  createdAt      DateTime  @default(now())
-
-  customer     Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  organisation Organisation           @relation(fields: [organisationId], references: [id], onDelete: Restrict)
-  invoice      Invoice?               @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  receipt      Receipt?               @relation(fields: [receiptId], references: [id], onDelete: SetNull)
-  reminder     Reminder?              @relation(fields: [reminderId], references: [id], onDelete: SetNull)
-  account      CustomerPortalAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
-  accountId    String?
+  createdAt      DateTime               @default(now())
+  accountId      String?
+  account        CustomerPortalAccount? @relation(fields: [accountId], references: [id])
+  customer       Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoice        Invoice?               @relation(fields: [invoiceId], references: [id])
+  organisation   Organisation           @relation(fields: [organisationId], references: [id])
+  receipt        Receipt?               @relation(fields: [receiptId], references: [id])
+  reminder       Reminder?              @relation(fields: [reminderId], references: [id])
 
   @@index([customerId, organisationId, createdAt])
   @@index([customerId, readAt, createdAt])
 }
 
 model AdminNotificationRead {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   organisationId String
   userId         String
   sourceKey      String
-  readAt         DateTime @default(now())
-  createdAt      DateTime @default(now())
-
-  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organisationId, userId, sourceKey])
   @@index([organisationId, userId, readAt])
 }
 
 model EmailDeliveryAttempt {
-  id                String    @id @default(uuid())
-  customerAccountId String?
-  customerId        String?
-  invoiceId         String?
-  receiptId         String?
-  purpose           String
-  recipient         String
-  status            String
-  attemptCount      Int       @default(0)
-  providerMessageId String?
-  errorCode         String?
-  errorMessage      String?
-  attemptedAt       DateTime?
-  acceptedAt        DateTime?
-  createdAt         DateTime  @default(now())
+  id                            String                       @id @default(uuid())
+  customerAccountId             String?
+  customerId                    String?
+  invoiceId                     String?
+  receiptId                     String?
+  reminderId                    String?                      @unique(map: "EmailDeliveryAttempt_reminderId_key")
+  customerSubscriptionReceiptId String?
+  billingPaymentId              String?                      @unique
+  purpose                       String
+  recipient                     String
+  status                        String
+  attemptCount                  Int                          @default(0)
+  providerMessageId             String?
+  errorCode                     String?
+  errorMessage                  String?
+  attemptedAt                   DateTime?
+  acceptedAt                    DateTime?
+  createdAt                     DateTime                     @default(now())
+  customerAccount               CustomerPortalAccount?       @relation(fields: [customerAccountId], references: [id])
+  customer                      Customer?                    @relation(fields: [customerId], references: [id])
+  invoice                       Invoice?                     @relation(fields: [invoiceId], references: [id])
+  receipt                       Receipt?                     @relation(fields: [receiptId], references: [id])
+  reminder                      Reminder?                    @relation(fields: [reminderId], references: [id], onDelete: SetNull)
+  customerSubscriptionReceipt   CustomerSubscriptionReceipt? @relation(fields: [customerSubscriptionReceiptId], references: [id])
+  billingPayment                BillingPayment?              @relation(fields: [billingPaymentId], references: [id], onDelete: SetNull)
 
-  customerAccount CustomerPortalAccount? @relation(fields: [customerAccountId], references: [id], onDelete: SetNull)
-  customer        Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  invoice         Invoice?               @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  receipt         Receipt?               @relation(fields: [receiptId], references: [id], onDelete: SetNull)
-
+  @@unique([customerSubscriptionReceiptId, purpose], map: "EmailAttempt_subReceipt_purpose_key")
   @@index([customerAccountId, purpose, createdAt])
   @@index([customerId, createdAt])
   @@index([status, createdAt])

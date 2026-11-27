@@ -19,6 +19,8 @@ app.get("/api/auth/profile", authMiddleware, (req, res) =>
 test("staff login validates passwords, JWT claims, roles, and profile isolation", async () => {
   const database = new URL(process.env.DATABASE_URL || "");
   const databaseName = decodeURIComponent(database.pathname.replace(/^\/+/, ""));
+  assert.equal(database.hostname, "localhost", "integration tests require the local development database");
+  assert.equal(database.port, "5432", "integration tests require the local development database");
   assert.equal(databaseName, "auron_collect_app_dev", "integration tests require the development database");
 
   const originalJwtSecret = process.env.JWT_SECRET;
@@ -71,6 +73,7 @@ test("staff login validates passwords, JWT claims, roles, and profile isolation"
       assert.equal(decoded.userId, roleUser.id);
       assert.equal(decoded.organisationId, organisation.id);
       assert.equal(decoded.role, roleUser.role);
+      assert.equal(decoded.sessionVersion, roleUser.sessionVersion);
 
       const profileResponse = await fetch(`${baseUrl}/api/auth/profile`, {
         headers: { Authorization: `Bearer ${loginData.token}` },
@@ -95,10 +98,158 @@ test("staff login validates passwords, JWT claims, roles, and profile isolation"
       body: JSON.stringify({ email: `missing-${suffix}@example.invalid`, password }),
     });
     assert.equal(nonexistentResponse.status, 401);
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const repeatedInvalidLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: roleUsers[0].email,
+          password: "wrong-password",
+        }),
+      });
+      assert.equal(repeatedInvalidLogin.status, 401);
+    }
+
+    const rateLimitedLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: roleUsers[0].email,
+        password: "wrong-password",
+      }),
+    });
+    assert.equal(rateLimitedLogin.status, 429);
   } finally {
     await new Promise((resolve) => server?.close(resolve));
     await prisma.user.deleteMany({ where: { organisationId: organisation?.id } });
     if (organisation) {
+      await prisma.organisation.delete({ where: { id: organisation.id } });
+    }
+    if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = originalJwtSecret;
+    await prisma.$disconnect();
+  }
+});
+
+test("staff password changes validate input, affect only the authenticated user, and revoke prior tokens", async () => {
+  const database = new URL(process.env.DATABASE_URL || "");
+  const databaseName = decodeURIComponent(database.pathname.replace(/^\/+/, ""));
+  assert.equal(database.hostname, "localhost", "password tests require the local development database");
+  assert.equal(database.port, "5432", "password tests require the local development database");
+  assert.equal(databaseName, "auron_collect_app_dev", "password tests require the development database");
+
+  const originalJwtSecret = process.env.JWT_SECRET;
+  const jwtSecret = crypto.randomBytes(32).toString("hex");
+  process.env.JWT_SECRET = jwtSecret;
+
+  let server;
+  let organisation;
+  const suffix = crypto.randomUUID();
+  const currentPassword = "Auth-Test-Password-94!";
+  const newPassword = "Staff-Change-Password-57!";
+  let users = [];
+
+  try {
+    organisation = await prisma.organisation.create({
+      data: { name: `Staff Password Integration ${suffix}` },
+    });
+    const passwordHash = await bcrypt.hash(currentPassword, 12);
+    users = await Promise.all(["owner", "colleague"].map((label) =>
+      prisma.user.create({
+        data: {
+          name: `${label} ${suffix}`,
+          email: `${label}-${suffix}@example.invalid`,
+          password: passwordHash,
+          role: "ADMIN",
+          organisationId: organisation.id,
+        },
+      })
+    ));
+
+    const [user, otherUser] = users;
+    const oldToken = jwt.sign({
+      userId: user.id,
+      organisationId: organisation.id,
+      role: user.role,
+      sessionVersion: user.sessionVersion,
+    }, jwtSecret, { expiresIn: "1h" });
+
+    await new Promise((resolve) => {
+      server = app.listen(0, "127.0.0.1", () => resolve());
+    });
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const changePassword = (body, token = oldToken) => fetch(`${baseUrl}/api/auth/change-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    const validBody = {
+      currentPassword,
+      newPassword,
+      confirmPassword: newPassword,
+    };
+
+    const unauthorizedResponse = await changePassword(validBody, "");
+    assert.equal(unauthorizedResponse.status, 401);
+
+    const incorrectCurrentResponse = await changePassword({
+      ...validBody,
+      currentPassword: "Incorrect-Current-Password-1!",
+    });
+    assert.equal(incorrectCurrentResponse.status, 401);
+
+    const weakPasswordResponse = await changePassword({
+      ...validBody,
+      newPassword: "weak",
+      confirmPassword: "weak",
+    });
+    assert.equal(weakPasswordResponse.status, 400);
+
+    const mismatchedConfirmationResponse = await changePassword({
+      ...validBody,
+      confirmPassword: "Different-Password-52!",
+    });
+    assert.equal(mismatchedConfirmationResponse.status, 400);
+
+    const reusedPasswordResponse = await changePassword({
+      ...validBody,
+      newPassword: currentPassword,
+      confirmPassword: currentPassword,
+    });
+    assert.equal(reusedPasswordResponse.status, 400);
+
+    const changeResponse = await changePassword({
+      ...validBody,
+      userId: otherUser.id,
+      organisationId: otherUser.organisationId,
+    });
+    assert.equal(changeResponse.status, 200);
+    const changeData = await changeResponse.json();
+    assert.equal(changeData.success, true);
+    assert.ok(changeData.token);
+
+    const oldSessionResponse = await fetch(`${baseUrl}/api/auth/profile`, {
+      headers: { Authorization: `Bearer ${oldToken}` },
+    });
+    assert.equal(oldSessionResponse.status, 401);
+
+    const newSessionResponse = await fetch(`${baseUrl}/api/auth/profile`, {
+      headers: { Authorization: `Bearer ${changeData.token}` },
+    });
+    assert.equal(newSessionResponse.status, 200);
+
+    const updatedUser = await prisma.user.findUnique({ where: { id: user.id } });
+    const unchangedOtherUser = await prisma.user.findUnique({ where: { id: otherUser.id } });
+    assert.equal(await bcrypt.compare(newPassword, updatedUser.password), true);
+    assert.equal(await bcrypt.compare(currentPassword, unchangedOtherUser.password), true);
+  } finally {
+    await new Promise((resolve) => server?.close(resolve));
+    if (organisation) {
+      await prisma.user.deleteMany({ where: { organisationId: organisation.id } });
       await prisma.organisation.delete({ where: { id: organisation.id } });
     }
     if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;

@@ -1,13 +1,13 @@
 export const getThemeClasses = (darkMode) => ({
   bgCanvas: darkMode
-    ? 'bg-[#111111] text-[#F5F5F5]'
-    : 'bg-slate-50 text-slate-900',
+    ? 'bg-[#0B1220] text-[#F3F6FB]'
+    : 'bg-[#F4F7FB] text-slate-900',
   bgCard: darkMode
-    ? 'bg-[#171717] border-[#292929]'
-    : 'bg-white border-slate-200 shadow-sm',
+    ? 'bg-[#111C2E] border-[#28364B]'
+    : 'bg-white border-[#DFE6EF] shadow-sm',
   bgSurface: darkMode
-    ? 'bg-[#222222] border-[#333333]'
-    : 'bg-slate-100 border-slate-200',
-  textMuted: darkMode ? 'text-[#A1A1AA]' : 'text-slate-600',
-  borderSubtle: darkMode ? 'border-[#222222]' : 'border-slate-200',
+    ? 'bg-[#18263B] border-[#33445D]'
+    : 'bg-[#EEF2F7] border-[#DCE3ED]',
+  textMuted: darkMode ? 'text-[#A7B3C5]' : 'text-slate-600',
+  borderSubtle: darkMode ? 'border-[#28364B]' : 'border-[#DFE6EF]',
 });

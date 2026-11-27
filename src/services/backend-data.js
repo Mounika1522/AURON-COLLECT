@@ -148,4 +148,5 @@ export const mapReminder = (reminder) => ({
   sentAt: reminder.sentAt,
   subject: reminder.subject || '',
   message: reminder.message || '',
+  lastError: reminder.lastError || '',
 });

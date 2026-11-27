@@ -1,11 +1,12 @@
-import "dotenv/config";
-
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 
 import prisma from "./config/prisma.js";
-import { assertSafeDevelopmentDatabase } from "./config/runtime-safety.js";
+import {
+  areBackgroundSchedulersEnabled,
+  assertSafeDevelopmentDatabase
+} from "./config/runtime-safety.js";
 
 import authRoutes from "./routes/auth.routes.js";
 import authMiddleware from "./middleware/auth.middleware.js";
@@ -30,7 +31,6 @@ import creditAdjustmentRoutes from "./routes/credit-adjustment.routes.js";
 import adminNotificationRoutes from "./routes/admin-notification.routes.js";
 
 import { startReminderScheduler } from "./services/reminder.scheduler.js";
-import emailTestRoutes from "./routes/email-test.routes.js";
 import { handleRazorpayWebhook } from "./controllers/subscription-billing.controller.js";
 import { handleCustomerSubscriptionWebhook } from "./controllers/customer-subscription.controller.js";
 import { startCustomerSubscriptionScheduler } from "./services/customer-subscription.scheduler.js";
@@ -211,14 +211,6 @@ app.use("/api/credit-adjustments", creditAdjustmentRoutes);
 app.use("/api/admin-notifications", adminNotificationRoutes);
 
 // ==============================
-// DEVELOPMENT EMAIL TEST
-// ==============================
-
-if (process.env.NODE_ENV !== "production") {
-  app.use("/api/email-test", emailTestRoutes);
-}
-
-// ==============================
 // 404 HANDLER
 // ==============================
 
@@ -271,12 +263,17 @@ const PORT = process.env.PORT || 5000;
 
 assertSafeDevelopmentDatabase();
 
-const server = app.listen(PORT, "localhost", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 
-  // Start reminder scheduler only once
+  if (areBackgroundSchedulersEnabled()) {
+    startCustomerSubscriptionScheduler();
+  } else {
+    console.log(
+      "Non-reminder background schedulers disabled by configuration."
+    );
+  }
   startReminderScheduler();
-  startCustomerSubscriptionScheduler();
 });
 
 // ==============================

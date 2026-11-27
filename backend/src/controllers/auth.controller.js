@@ -13,7 +13,8 @@ const generateToken = (user) => {
     {
       userId: user.id,
       organisationId: user.organisationId,
-      role: user.role
+      role: user.role,
+      sessionVersion: user.sessionVersion ?? 0
     },
     process.env.JWT_SECRET,
     { expiresIn: "1d" }
@@ -193,6 +194,114 @@ export const login = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Login failed. Please try again later."
+    });
+  }
+};
+
+const isStrongPassword = (password) => {
+  const characterClasses = [
+    /\p{Ll}/u,
+    /\p{Lu}/u,
+    /\p{N}/u,
+    /[^\p{L}\p{N}\s]/u
+  ];
+
+  return (
+    password.length >= 12 &&
+    Buffer.byteLength(password, "utf8") <= 72 &&
+    characterClasses.filter((characterClass) => characterClass.test(password)).length >= 3
+  );
+};
+
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+    if (
+      typeof currentPassword !== "string" ||
+      typeof newPassword !== "string" ||
+      typeof confirmPassword !== "string" ||
+      !currentPassword ||
+      !newPassword ||
+      !confirmPassword
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password, new password, and confirmation are required."
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password and confirmation do not match."
+      });
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 12 characters, use at least 3 character types, and fit bcrypt's 72-byte limit."
+      });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        id: req.user.userId,
+        organisationId: req.user.organisationId
+      },
+      select: {
+        id: true,
+        role: true,
+        organisationId: true,
+        password: true,
+        sessionVersion: true
+      }
+    });
+
+    if (!user || !(await bcrypt.compare(currentPassword, user.password))) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect."
+      });
+    }
+
+    if (await bcrypt.compare(newPassword, user.password)) {
+      return res.status(400).json({
+        success: false,
+        message: "Choose a new password you have not used before."
+      });
+    }
+
+    const password = await bcrypt.hash(newPassword, 12);
+    const sessionVersion = user.sessionVersion + 1;
+    const update = await prisma.user.updateMany({
+      where: {
+        id: user.id,
+        organisationId: user.organisationId,
+        password: user.password,
+        sessionVersion: user.sessionVersion
+      },
+      data: { password, sessionVersion }
+    });
+
+    if (update.count !== 1) {
+      return res.status(409).json({
+        success: false,
+        message: "Your password was changed in another session. Sign in again and retry."
+      });
+    }
+
+    const token = generateToken({ ...user, password, sessionVersion });
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully. Other active sessions have been signed out.",
+      token
+    });
+  } catch (error) {
+    console.error("Staff password change failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to change your password. Please try again."
     });
   }
 };

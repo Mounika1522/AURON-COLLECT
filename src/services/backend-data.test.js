@@ -79,3 +79,16 @@ test('maps customer, task, promise, dispute, credit and communication records', 
   assert.equal(mapCommunication({ id: 'm1', channel: 'WHATSAPP' }).channel, 'Whatsapp');
   assert.equal(mapReminder({ id: 'r1', status: 'PENDING' }).status, 'Pending');
 });
+
+test('preserves reminder delivery failure codes for the history explanation', () => {
+  const reminder = mapReminder({
+    id: 'r1',
+    status: 'FAILED',
+    deliveryStatus: 'DISABLED',
+    lastError: 'DELIVERY_DISABLED',
+  });
+
+  assert.equal(reminder.status, 'Failed');
+  assert.equal(reminder.deliveryStatus, 'Disabled');
+  assert.equal(reminder.lastError, 'DELIVERY_DISABLED');
+});

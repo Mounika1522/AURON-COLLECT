@@ -11,6 +11,21 @@ html {
   scroll-behavior: smooth;
 }
 
+body {
+  margin: 0;
+  font-family: Inter, "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 .customer-portal-shell {
   width: 100%;
   min-height: 100vh;
@@ -275,7 +290,9 @@ button:active {
   }
 
   .card-animate:hover,
+  .customer-portal-shell main .portal-interactive-card:hover,
   button:active,
+  .customer-portal-shell button:not(:disabled):hover,
   .modal-layer > :first-child,
   .dropdown-motion {
     transform: none !important;
@@ -293,5 +310,423 @@ button:active {
 
   .notification-item:nth-child(n) {
     animation-delay: 0ms !important;
+  }
+}
+
+:root {
+  --auron-red: #e50914;
+  --auron-red-dark: #b81220;
+  --auron-navy-950: #0b1220;
+  --auron-navy-900: #101b2c;
+  --auron-navy-800: #18263b;
+  --auron-focus: rgba(229, 9, 20, 0.28);
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--auron-red);
+  outline-offset: 2px;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.app-auth-screen {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background-image:
+    radial-gradient(ellipse at 12% 12%, rgba(229, 9, 20, 0.11), transparent 34%),
+    radial-gradient(ellipse at 92% 84%, rgba(25, 77, 130, 0.14), transparent 36%);
+}
+
+.app-auth-screen[data-theme="dark"] {
+  color-scheme: dark;
+  background-color: var(--auron-navy-950);
+}
+
+.app-auth-screen[data-theme="light"] {
+  color-scheme: light;
+  background-color: #f4f7fb;
+}
+
+.app-auth-card {
+  position: relative;
+  border-radius: 1.5rem;
+  box-shadow: 0 24px 70px rgba(7, 17, 34, 0.16);
+  backdrop-filter: blur(18px);
+}
+
+.app-profile-dialog {
+  animation: cardEnter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.app-auth-screen[data-theme="dark"] .app-auth-card {
+  background-color: rgba(17, 28, 46, 0.94);
+  border-color: rgba(148, 163, 184, 0.2);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+}
+
+.app-auth-screen[data-theme="light"] .app-auth-card {
+  background-color: rgba(255, 255, 255, 0.94);
+  border-color: #e0e7f0;
+  box-shadow: 0 24px 70px rgba(27, 44, 68, 0.12);
+}
+
+.app-admin-shell[data-theme="dark"],
+.customer-portal-shell[data-theme="dark"] {
+  color-scheme: dark;
+  --ui-border: #28364b;
+  --ui-table-head: #16243a;
+  --ui-row-hover: rgba(229, 9, 20, 0.08);
+  --ui-card-shadow: 0 8px 26px rgba(0, 0, 0, 0.16);
+  --ui-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.app-admin-shell[data-theme="light"],
+.customer-portal-shell[data-theme="light"] {
+  color-scheme: light;
+  --ui-border: #dfe6ef;
+  --ui-table-head: #f3f6fa;
+  --ui-row-hover: rgba(229, 9, 20, 0.045);
+  --ui-card-shadow: 0 8px 24px rgba(29, 48, 76, 0.055);
+  --ui-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.app-admin-header {
+  min-height: 4.25rem;
+  border-color: var(--ui-border);
+  background-color: color-mix(in srgb, white 92%, transparent);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.035);
+  backdrop-filter: blur(16px);
+}
+
+.app-admin-shell[data-theme="dark"] .app-admin-header {
+  background-color: color-mix(in srgb, #111c2e 92%, transparent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.app-admin-sidebar {
+  flex: 0 0 17rem;
+  border-color: var(--ui-border);
+  padding: 1rem 0.8rem;
+}
+
+.app-admin-sidebar [aria-current="page"] {
+  position: relative;
+  overflow: hidden;
+}
+
+.app-admin-sidebar [aria-current="page"]::before {
+  position: absolute;
+  inset-block: 0.45rem;
+  inset-inline-start: 0;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: rgba(255, 255, 255, 0.88);
+  content: "";
+}
+
+.app-admin-main {
+  min-width: 0;
+  padding: 1.5rem clamp(1rem, 2.2vw, 2rem) 7rem;
+}
+
+.app-admin-main h1 {
+  letter-spacing: -0.035em;
+}
+
+.app-admin-main h2,
+.app-admin-main h3 {
+  letter-spacing: -0.02em;
+}
+
+.app-admin-main .rounded-2xl.border,
+.customer-portal-shell main .rounded-2xl.border {
+  box-shadow: var(--ui-card-shadow);
+}
+
+.app-admin-main table,
+.customer-portal-shell main table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-admin-main thead,
+.customer-portal-shell main thead {
+  background: var(--ui-table-head);
+}
+
+.app-admin-main thead th,
+.customer-portal-shell main thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.8rem 0.75rem;
+  border-bottom: 1px solid var(--ui-border);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.app-admin-main tbody td,
+.customer-portal-shell main tbody td {
+  padding-inline: 0.75rem;
+}
+
+.app-admin-main tbody tr:hover,
+.customer-portal-shell main tbody tr:hover {
+  background-color: var(--ui-row-hover);
+}
+
+.app-admin-main input:not([type="checkbox"]):not([type="radio"]),
+.app-admin-main select,
+.app-admin-main textarea,
+.customer-portal-shell input:not([type="checkbox"]):not([type="radio"]),
+.customer-portal-shell select,
+.customer-portal-shell textarea {
+  border-color: var(--ui-border);
+  box-shadow: var(--ui-control-shadow);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.app-admin-main input:focus,
+.app-admin-main select:focus,
+.app-admin-main textarea:focus,
+.customer-portal-shell input:focus,
+.customer-portal-shell select:focus,
+.customer-portal-shell textarea:focus {
+  border-color: var(--auron-red);
+  box-shadow: 0 0 0 3px var(--auron-focus);
+}
+
+.app-table-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.app-table-search {
+  position: relative;
+  flex: 1 1 15rem;
+  max-width: 25rem;
+}
+
+.app-table-search input {
+  width: 100%;
+  min-height: 2.65rem;
+  padding: 0.65rem 0.8rem 0.65rem 2.45rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.8rem;
+  background: transparent;
+  font-size: 0.8rem;
+}
+
+.app-table-search svg {
+  position: absolute;
+  top: 50%;
+  left: 0.85rem;
+  width: 1rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.app-table-tools select {
+  min-height: 2.65rem;
+  min-width: 9rem;
+  padding: 0.55rem 2rem 0.55rem 0.75rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.8rem;
+  background-color: transparent;
+  font-size: 0.78rem;
+}
+
+.app-table-filter {
+  display: flex;
+}
+
+.app-table-count {
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.app-admin-shell[data-theme="dark"] .app-table-count,
+.customer-portal-shell[data-theme="dark"] .app-table-count {
+  color: #a7b3c5;
+}
+
+.app-table-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.app-admin-shell[data-theme="dark"] .app-table-pagination,
+.customer-portal-shell[data-theme="dark"] .app-table-pagination {
+  color: #a7b3c5;
+}
+
+.app-table-pagination button {
+  min-width: 2.4rem;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.7rem;
+  background: transparent;
+  font-weight: 650;
+}
+
+.app-table-pagination button:not(:disabled):hover {
+  border-color: var(--auron-red);
+  color: var(--auron-red);
+}
+
+.app-table-pagination button:disabled {
+  opacity: 0.45;
+}
+
+.app-table-pagination select {
+  min-height: 2.4rem;
+  padding: 0.4rem 1.8rem 0.4rem 0.65rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.7rem;
+  background-color: transparent;
+  font-size: 0.75rem;
+}
+
+.app-toast {
+  max-width: min(28rem, calc(100vw - 2rem));
+  animation: toastEnter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes toastEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.app-table-skeleton {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem 0;
+}
+
+.app-table-skeleton span {
+  display: block;
+  height: 1.15rem;
+  border-radius: 0.45rem;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.12) 25%, rgba(148, 163, 184, 0.24) 50%, rgba(148, 163, 184, 0.12) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.35s ease-in-out infinite;
+}
+
+@keyframes skeletonShimmer {
+  to {
+    background-position-x: -200%;
+  }
+}
+
+.customer-portal-shell header {
+  border-color: var(--ui-border);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.035);
+  backdrop-filter: blur(16px);
+}
+
+.customer-portal-shell main .portal-interactive-card {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.customer-portal-shell main .portal-interactive-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(229, 9, 20, 0.34);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.09);
+}
+
+.customer-portal-shell button:not(:disabled) {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.customer-portal-shell button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.customer-portal-shell button:active {
+  transform: scale(0.98);
+}
+
+.customer-portal-shell .portal-control {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+@media (max-width: 1023px) {
+  .app-admin-main {
+    padding: 1.2rem 1rem 7rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-auth-screen {
+    padding: 1rem;
+  }
+
+  .app-auth-card {
+    padding: 1.25rem;
+  }
+
+  .app-admin-header {
+    padding-inline: 0.75rem;
+  }
+
+  .app-admin-main {
+    padding: 1rem 0.75rem 7rem;
+  }
+
+  .app-table-tools {
+    align-items: stretch;
+  }
+
+  .app-table-search {
+    max-width: none;
+  }
+
+  .app-table-pagination {
+    align-items: flex-start;
   }
 }

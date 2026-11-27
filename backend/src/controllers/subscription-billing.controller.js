@@ -1,7 +1,7 @@
 import PDFDocument from "pdfkit";
 import prisma from "../config/prisma.js";
 import {
-  assertRazorpayTestMode,
+  assertRazorpayConfiguration,
   createRazorpayClient,
   verifyPaymentSignature,
   verifyWebhookSignature
@@ -12,6 +12,9 @@ import {
   recordCapturedPayment,
   writeBillingOrderCreatedAudit
 } from "../services/subscription-billing.service.js";
+import {
+  sendOrganizationSubscriptionReceiptEmail
+} from "../services/organization-subscription-receipt.service.js";
 
 const isOrganisationAdmin = (req, res) => {
   if (!["ADMIN", "OWNER"].includes(req.user.role)) {
@@ -25,7 +28,16 @@ const isOrganisationAdmin = (req, res) => {
 };
 
 const isBillingConfigurationError = (error) =>
-  error.code === "RAZORPAY_TEST_MODE_UNAVAILABLE";
+  error.code === "RAZORPAY_CONFIGURATION_UNAVAILABLE";
+
+const sendBillingReceiptSafely = async (paymentId) => {
+  try {
+    return await sendOrganizationSubscriptionReceiptEmail(paymentId);
+  } catch (error) {
+    console.error("Subscription receipt email failed:", error.code || error.name);
+    return { status: "FAILED" };
+  }
+};
 
 export const createSubscriptionOrder = async (req, res) => {
   if (!isOrganisationAdmin(req, res)) return;
@@ -54,13 +66,13 @@ export const createSubscriptionOrder = async (req, res) => {
 
   let razorpay;
   try {
-    assertRazorpayTestMode();
+    assertRazorpayConfiguration();
     razorpay = createRazorpayClient();
   } catch (error) {
     if (isBillingConfigurationError(error)) {
       return res.status(503).json({
         success: false,
-        message: "Test-mode billing is not configured"
+        message: "Razorpay billing is not configured for this environment"
       });
     }
     throw error;
@@ -151,10 +163,10 @@ export const createSubscriptionOrder = async (req, res) => {
           }
         });
       });
-      console.error("Razorpay test order creation failed:", error.code || error.name);
+      console.error("Razorpay order creation failed:", error.code || error.name);
       return res.status(502).json({
         success: false,
-        message: "The test payment order could not be created"
+        message: "The payment order could not be created"
       });
     }
   }
@@ -196,13 +208,13 @@ export const verifySubscriptionPayment = async (req, res) => {
 
   let gateway;
   try {
-    assertRazorpayTestMode();
+    assertRazorpayConfiguration();
     gateway = createRazorpayClient();
   } catch (error) {
     if (isBillingConfigurationError(error)) {
       return res.status(503).json({
         success: false,
-        message: "Test-mode billing is not configured"
+        message: "Razorpay billing is not configured for this environment"
       });
     }
     throw error;
@@ -248,11 +260,13 @@ export const verifySubscriptionPayment = async (req, res) => {
         message: "The payment has not been captured for this billing order"
       });
     }
+    const receiptEmail = await sendBillingReceiptSafely(payment.id);
 
     return res.status(200).json({
       success: true,
       message: "Subscription payment verified",
       subscription: result.payment.subscription,
+      receiptEmailStatus: receiptEmail.status,
       invoice: result.payment.invoice
         ? {
             id: result.payment.invoice.id,
@@ -264,7 +278,7 @@ export const verifySubscriptionPayment = async (req, res) => {
     console.error("Subscription payment verification failed:", error.code || error.name);
     return res.status(502).json({
       success: false,
-      message: "Unable to verify the payment with the test payment provider"
+      message: "Unable to verify the payment with the payment provider"
     });
   }
 };
@@ -358,14 +372,18 @@ export const downloadBillingInvoice = async (req, res) => {
   }
 };
 
-export const handleRazorpayWebhook = async (req, res) => {
+export const createRazorpayWebhookHandler = ({
+  db = prisma,
+  env = process.env,
+  sendReceipt = sendBillingReceiptSafely
+} = {}) => async (req, res) => {
   try {
-    assertRazorpayTestMode();
+    assertRazorpayConfiguration(env);
   } catch (error) {
     if (isBillingConfigurationError(error)) {
       return res.status(503).json({
         success: false,
-        message: "Test-mode billing is not configured"
+        message: "Razorpay billing is not configured for this environment"
       });
     }
     throw error;
@@ -376,7 +394,7 @@ export const handleRazorpayWebhook = async (req, res) => {
   if (
     !providerEventId ||
     providerEventId.length > 255 ||
-    !verifyWebhookSignature(req.body, signature)
+    !verifyWebhookSignature(req.body, signature, env.RAZORPAY_WEBHOOK_SECRET)
   ) {
     return res.status(401).json({
       success: false,
@@ -395,7 +413,7 @@ export const handleRazorpayWebhook = async (req, res) => {
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx) => {
       const eventType =
         typeof payload.event === "string" ? payload.event : "unknown";
       const gatewayPayment =
@@ -425,7 +443,7 @@ export const handleRazorpayWebhook = async (req, res) => {
           where: { id: event.id },
           data: { processedAt: new Date() }
         });
-        return "IGNORED";
+        return { status: "IGNORED" };
       }
 
       if (!isCapturedEvent) {
@@ -442,7 +460,7 @@ export const handleRazorpayWebhook = async (req, res) => {
           where: { id: event.id },
           data: { status: "IGNORED", processedAt: new Date() }
         });
-        return "IGNORED";
+        return { status: "IGNORED", paymentId: payment.id };
       }
 
       const capture = await recordCapturedPayment(tx, payment, gatewayPayment);
@@ -472,15 +490,25 @@ export const handleRazorpayWebhook = async (req, res) => {
           }
         });
       }
-      return capture.status;
+      return { status: capture.status, paymentId: payment.id };
     });
+    if (["PAID", "ALREADY_PAID"].includes(result.status)) {
+      await sendReceipt(result.paymentId);
+    }
     return res.status(200).json({
       success: true,
       duplicate: false,
-      status: result
+      status: result.status
     });
   } catch (error) {
     if (error.code === "P2002") {
+      const existingEvent = await db.razorpayWebhookEvent.findUnique({
+        where: { providerEventId },
+        select: { status: true, billingPaymentId: true }
+      });
+      if (existingEvent?.status === "PROCESSED" && existingEvent.billingPaymentId) {
+        await sendReceipt(existingEvent.billingPaymentId);
+      }
       return res.status(200).json({
         success: true,
         duplicate: true
@@ -493,4 +521,6 @@ export const handleRazorpayWebhook = async (req, res) => {
     });
   }
 };
+
+export const handleRazorpayWebhook = createRazorpayWebhookHandler();
 

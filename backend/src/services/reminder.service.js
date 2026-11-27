@@ -1,5 +1,8 @@
 
-import prisma from "../config/prisma.js";
+import {
+  isValidIanaTimeZone,
+  localDateTimeToUtc
+} from "./reminder-time.service.js";
 
 const reminderStages = [
   { key: "BEFORE_DUE_3_DAYS", days: -3 },
@@ -7,25 +10,40 @@ const reminderStages = [
   { key: "OVERDUE_1_DAY", days: 1 }
 ];
 
-// Set reminder time to 9:00 AM India time.
-const getReminderDate = (dueDate, offsetDays) => {
+export const getReminderDate = (
+  dueDate,
+  offsetDays,
+  timeZone = "Asia/Kolkata"
+) => {
   const date = new Date(dueDate);
-
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate() + offsetDays;
-
-  // 09:00 IST = 03:30 UTC
-  return new Date(Date.UTC(year, month, day, 3, 30, 0));
+  if (!Number.isFinite(date.getTime()) || !isValidIanaTimeZone(timeZone)) {
+    throw new RangeError("A valid invoice date and customer time zone are required.");
+  }
+  const calendarDate = new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate() + offsetDays
+  ));
+  const scheduledFor = localDateTimeToUtc({
+    year: calendarDate.getUTCFullYear(),
+    month: calendarDate.getUTCMonth() + 1,
+    day: calendarDate.getUTCDate(),
+    hour: 9,
+    minute: 0,
+    second: 0
+  }, timeZone);
+  if (!scheduledFor) {
+    throw new RangeError("The reminder time does not exist in the customer time zone.");
+  }
+  return scheduledFor;
 };
 
-// Display date in Indian format.
-const formatIndianDate = (date) => {
+const formatInvoiceDate = (date) => {
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-    timeZone: "Asia/Kolkata"
+    timeZone: "UTC"
   }).format(new Date(date));
 };
 
@@ -86,13 +104,17 @@ export const getInvoiceOutstanding = async (
 export const cancelPendingInvoiceReminders = async (
   db,
   invoiceId,
-  organisationId
+  organisationId,
+  { preserveScheduledRetries = false } = {}
 ) => {
   return db.reminder.updateMany({
     where: {
       invoiceId,
       organisationId,
-      status: "PENDING"
+      status: "PENDING",
+      ...(preserveScheduledRetries
+        ? { deliveryStatus: { notIn: ["WAITING_FOR_VERIFIED_EMAIL", "RETRY_SCHEDULED"] } }
+        : {})
     },
     data: {
       status: "CANCELLED",
@@ -101,14 +123,19 @@ export const cancelPendingInvoiceReminders = async (
   });
 };
 
-export const syncInvoiceReminders = async (db, invoice) => {
+export const syncInvoiceReminders = async (
+  db,
+  invoice,
+  { preserveScheduledRetries = false } = {}
+) => {
   if (!invoice?.id || !invoice?.organisationId) return;
 
   // Cancel pending reminders before rebuilding the schedule.
   await cancelPendingInvoiceReminders(
     db,
     invoice.id,
-    invoice.organisationId
+    invoice.organisationId,
+    { preserveScheduledRetries }
   );
 
   if (invoice.status !== "ISSUED") return;
@@ -121,7 +148,7 @@ export const syncInvoiceReminders = async (db, invoice) => {
     }
   });
 
-  if (!customer?.email) return;
+  if (!customer) return;
 
   const balance = await getInvoiceOutstanding(
     db,
@@ -131,12 +158,18 @@ export const syncInvoiceReminders = async (db, invoice) => {
 
   if (!balance || balance.outstanding <= 0) return;
 
+  const portalAccount = await db.customerPortalAccount.findUnique({
+    where: { customerId: customer.id },
+    select: { timeZone: true }
+  });
+  const timeZone = portalAccount?.timeZone || "Asia/Kolkata";
   const now = new Date();
 
   for (const stage of reminderStages) {
     const scheduledFor = getReminderDate(
       invoice.dueDate,
-      stage.days
+      stage.days,
+      timeZone
     );
 
     // Do not schedule reminders for dates that have passed.
@@ -152,11 +185,13 @@ export const syncInvoiceReminders = async (db, invoice) => {
     });
 
     const amount = balance.outstanding.toFixed(2);
-    const dueDateText = formatIndianDate(invoice.dueDate);
+    const dueDateText = formatInvoiceDate(invoice.dueDate);
 
-    const subject =
-      template?.subject ||
-      `Payment reminder: Invoice ${invoice.invoiceNumber}`;
+    const defaultSubject =
+      stage.key === "OVERDUE_1_DAY"
+        ? `Overdue payment reminder: Invoice ${invoice.invoiceNumber}`
+        : `Payment reminder: Invoice ${invoice.invoiceNumber}`;
+    const subject = template?.subject || defaultSubject;
 
     const message = template?.body
       ? template.body

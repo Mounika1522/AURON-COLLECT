@@ -14,6 +14,11 @@ import {
   loadBrandedOrganisationName,
   renderBrandedPdf
 } from "../services/branded-pdf.service.js";
+import {
+  finalizeCustomerSubscriptionReceipt,
+  findVerifiedSubscriptionReceipt,
+  isStoredReceiptPdfValid
+} from "../services/customer-subscription-receipt.service.js";
 
 // ==========================================
 // COMMON VALIDATION
@@ -358,6 +363,141 @@ export const downloadReceiptPdf = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Unable to generate the receipt PDF."
+    });
+  }
+};
+
+export const getCustomerSubscriptionReceipts = async (req, res) => {
+  try {
+    const receipts = await prisma.customerSubscriptionReceipt.findMany({
+      where: {
+        organisationId: req.dashboardAccess.organisationId,
+        payment: { status: "PAID" }
+      },
+      select: {
+        id: true,
+        receiptNumber: true,
+        transactionId: true,
+        customerName: true,
+        customerEmail: true,
+        paymentMethod: true,
+        amount: true,
+        currency: true,
+        paidAt: true,
+        customer: { select: { name: true, email: true } },
+        emailDeliveryAttempts: {
+          where: { purpose: "PAYMENT_RECEIPT" },
+          select: { status: true },
+          orderBy: { createdAt: "desc" },
+          take: 1
+        }
+      },
+      orderBy: { paidAt: "desc" }
+    });
+    return res.status(200).json({
+      success: true,
+      count: receipts.length,
+      receipts: receipts.map((receipt) => ({
+        ...receipt,
+        amount: Number(receipt.amount),
+        customerName: receipt.customerName || receipt.customer.name,
+        customerEmail: receipt.customerEmail || receipt.customer.email,
+        emailStatus: receipt.emailDeliveryAttempts[0]?.status || "NOT_SENT"
+      }))
+    });
+  } catch (error) {
+    console.error("Verified subscription receipt query failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch verified subscription receipts."
+    });
+  }
+};
+
+export const downloadCustomerSubscriptionReceiptPdf = async (req, res) => {
+  try {
+    const access = req.dashboardAccess;
+    const receipt = await prisma.customerSubscriptionReceipt.findFirst({
+      where: {
+        id: req.params.receiptId,
+        organisationId: access.organisationId,
+        payment: { status: "PAID" }
+      },
+      select: {
+        id: true,
+        paymentId: true,
+        receiptNumber: true,
+        pdfBytes: true,
+        pdfSha256: true,
+        verificationTokenHash: true,
+        payment: { select: { status: true } }
+      }
+    });
+    if (!receipt) {
+      return res.status(404).json({
+        success: false,
+        message: "Verified subscription receipt not found in this organisation."
+      });
+    }
+
+    const finalized = isStoredReceiptPdfValid(receipt)
+      ? receipt
+      : await finalizeCustomerSubscriptionReceipt(
+          receipt.paymentId,
+          process.env.PUBLIC_API_URL || `${req.protocol}://${req.get("host")}`
+        );
+    if (
+      !isStoredReceiptPdfValid(finalized) ||
+      finalized.payment.status !== "PAID"
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Verified receipt PDF is not available."
+      });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${receipt.receiptNumber}.pdf"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.status(200).send(Buffer.from(finalized.pdfBytes));
+  } catch (error) {
+    console.error("Verified subscription receipt PDF failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to download the verified subscription receipt."
+    });
+  }
+};
+
+export const verifyCustomerSubscriptionReceipt = async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    const receipt = await findVerifiedSubscriptionReceipt(req.params.token);
+    if (!receipt) {
+      return res.status(404).json({
+        success: false,
+        verified: false,
+        message: "Receipt could not be verified."
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      verified: true,
+      company: "ALPHA AURON PRIVATE LIMITED",
+      product: "AURON COLLECT",
+      receiptNumber: receipt.receiptNumber,
+      transactionId: receipt.transactionId,
+      amount: Number(receipt.amount),
+      currency: receipt.currency,
+      paidAt: receipt.paidAt,
+      paymentMode: receipt.paymentMethod,
+      status: "PAID"
+    });
+  } catch (error) {
+    console.error("Receipt verification lookup failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      verified: false,
+      message: "Unable to verify this receipt."
     });
   }
 };

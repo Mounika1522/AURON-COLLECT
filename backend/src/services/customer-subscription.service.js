@@ -49,6 +49,39 @@ export const verifyCustomerPaymentSignature = (
   return safeEqualHex(signature, expected);
 };
 
+export const verifyCustomerSubscriptionPayment = async ({
+  payment,
+  orderId,
+  paymentId,
+  signature,
+  secret,
+  fetchProviderPayment,
+  runTransaction
+}) => {
+  if (!verifyCustomerPaymentSignature(orderId, paymentId, signature, secret)) {
+    return { status: "INVALID_SIGNATURE" };
+  }
+  if (
+    typeof fetchProviderPayment !== "function" ||
+    typeof runTransaction !== "function"
+  ) {
+    throw new TypeError("Payment verification requires provider and transaction handlers.");
+  }
+
+  const providerPayment = await fetchProviderPayment(paymentId);
+  if (
+    providerPayment?.id !== paymentId ||
+    providerPayment?.order_id !== orderId ||
+    providerPayment?.status !== "captured"
+  ) {
+    return { status: "PENDING" };
+  }
+
+  return runTransaction((tx) =>
+    recordCapturedCustomerPayment(tx, payment, providerPayment)
+  );
+};
+
 export const verifyCustomerWebhookSignature = (
   rawBody,
   signature,
@@ -142,6 +175,9 @@ export const recordCapturedCustomerPayment = async (
   providerPayment,
   now = new Date()
 ) => {
+  if (payment.status === "PAID") return { status: "ALREADY_PAID" };
+  if (payment.status !== "CREATED") return { status: "PAYMENT_NOT_PAYABLE" };
+
   if (
     typeof providerPayment?.id !== "string" ||
     !providerPayment.id ||
@@ -162,7 +198,7 @@ export const recordCapturedCustomerPayment = async (
   const paidAt =
     providerDate && Number.isFinite(providerDate.getTime()) ? providerDate : now;
   const updated = await tx.customerSubscriptionPayment.updateMany({
-    where: { id: payment.id, status: { not: "PAID" } },
+    where: { id: payment.id, status: "CREATED" },
     data: {
       status: "PAID",
       razorpayPaymentId: providerPayment.id,
@@ -171,7 +207,7 @@ export const recordCapturedCustomerPayment = async (
       errorCode: null
     }
   });
-  if (updated.count !== 1) return { status: "ALREADY_PAID" };
+  if (updated.count !== 1) return { status: "PAYMENT_NOT_PAYABLE" };
 
   const subscriptionStatus =
     payment.periodStart > now ? "SCHEDULED" : "ACTIVE";
@@ -199,6 +235,20 @@ export const recordCapturedCustomerPayment = async (
 
   const invoiceNumber = `CS-INV-${payment.id}`;
   const receiptNumber = `CS-REC-${payment.id}`;
+  const [customer, portalAccount] = await Promise.all([
+    tx.customer.findUnique({
+      where: { id: payment.customerId },
+      select: { name: true, email: true }
+    }),
+    tx.customerPortalAccount.findUnique({
+      where: { customerId: payment.customerId },
+      select: { fullName: true, email: true }
+    })
+  ]);
+  if (!customer) {
+    throw new Error("Customer record is required to issue a payment receipt.");
+  }
+
   await tx.customerSubscriptionInvoice.create({
     data: {
       organisationId: payment.organisationId,
@@ -220,6 +270,10 @@ export const recordCapturedCustomerPayment = async (
       customerId: payment.customerId,
       paymentId: payment.id,
       receiptNumber,
+      transactionId: providerPayment.id,
+      customerName: portalAccount?.fullName || customer.name,
+      customerEmail: portalAccount?.email || customer.email,
+      paymentMethod: providerPayment.method || null,
       amount: payment.amount,
       currency: payment.currency,
       paidAt

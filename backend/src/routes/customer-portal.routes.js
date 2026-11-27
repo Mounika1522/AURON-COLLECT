@@ -29,6 +29,12 @@ import {
   getCustomerSubscriptions,
   verifyCustomerSubscriptionCheckout
 } from "../controllers/customer-subscription.controller.js";
+import {
+  createCustomerOrganizationSubscriptionOrder,
+  downloadCustomerOrganizationSubscriptionReceipt,
+  getCustomerOrganizationSubscription,
+  verifyCustomerOrganizationSubscriptionOrder
+} from "../controllers/customer-organization-subscription.controller.js";
 
 const router = express.Router();
 const customerAssistantLimit = rateLimit({
@@ -54,6 +60,19 @@ router.patch("/notifications/:notificationId/read", markCustomerNotificationRead
 router.get("/subscriptions", getCustomerSubscriptions);
 router.post("/subscriptions/checkout", createCustomerSubscriptionCheckout);
 router.post("/subscriptions/verify", verifyCustomerSubscriptionCheckout);
+router.get("/organization-subscription", getCustomerOrganizationSubscription);
+router.post(
+  "/organization-subscription/orders",
+  createCustomerOrganizationSubscriptionOrder
+);
+router.post(
+  "/organization-subscription/orders/verify",
+  verifyCustomerOrganizationSubscriptionOrder
+);
+router.get(
+  "/organization-subscription/payments/:paymentId/receipt.pdf",
+  downloadCustomerOrganizationSubscriptionReceipt
+);
 router.post("/subscriptions/:subscriptionId/cancel", cancelCustomerSubscription);
 router.get("/subscriptions/billing", getCustomerSubscriptionBilling);
 router.get("/subscriptions/billing-history/pdf", getCustomerSubscriptionHistoryPdf);

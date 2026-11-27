@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import {
+  assertRazorpayConfiguration,
   assertRazorpayTestMode,
+  getRazorpayConfigurationStatus,
   verifyPaymentSignature,
   verifyWebhookSignature
 } from "./razorpay.service.js";
@@ -24,6 +26,43 @@ test("Razorpay billing rejects live-mode keys and mode", () => {
     }),
     { code: "RAZORPAY_TEST_MODE_UNAVAILABLE" }
   );
+});
+
+test("Razorpay configuration accepts matching test or live credentials without exposing secrets", () => {
+  const testConfiguration = {
+    RAZORPAY_MODE: "test",
+    RAZORPAY_KEY_ID: "rzp_test_example",
+    RAZORPAY_KEY_SECRET: "test-secret"
+  };
+  const liveConfiguration = {
+    RAZORPAY_MODE: "live",
+    RAZORPAY_KEY_ID: "rzp_live_example",
+    RAZORPAY_KEY_SECRET: "live-secret"
+  };
+
+  assert.deepEqual(getRazorpayConfigurationStatus(testConfiguration), {
+    available: true,
+    mode: "test"
+  });
+  assert.deepEqual(getRazorpayConfigurationStatus(liveConfiguration), {
+    available: true,
+    mode: "live"
+  });
+  assert.doesNotThrow(() => assertRazorpayConfiguration(testConfiguration));
+  assert.doesNotThrow(() => assertRazorpayConfiguration(liveConfiguration));
+  assert.deepEqual(getRazorpayConfigurationStatus({
+    ...testConfiguration,
+    RAZORPAY_KEY_ID: "rzp_live_example"
+  }), {
+    available: false,
+    mode: null
+  });
+  assert.deepEqual(getRazorpayConfigurationStatus({
+    RAZORPAY_MODE: "test"
+  }), {
+    available: false,
+    mode: null
+  });
 });
 
 test("payment and webhook signatures require the exact HMAC and raw body", () => {

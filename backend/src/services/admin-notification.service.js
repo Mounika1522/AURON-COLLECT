@@ -40,6 +40,30 @@ export const isValidNotificationSourceKey = (sourceKey) =>
   sourceKey.length <= 160 &&
   NOTIFICATION_SOURCE_PATTERN.test(sourceKey);
 
+export const mapEmailDeliveryAttemptNotification = (attempt, organisationId) => {
+  const reference =
+    attempt.invoice?.invoiceNumber ||
+    attempt.receipt?.receiptNumber ||
+    attempt.customerSubscriptionReceipt?.receiptNumber ||
+    attempt.purpose;
+  const missingVerifiedEmail = attempt.errorCode === "NO_VERIFIED_EMAIL";
+
+  return {
+    sourceKey: `FAILED_EMAIL:${attempt.id}`,
+    type: "FAILED_EMAIL",
+    organisationId,
+    assignedExecutive: attempt.invoice?.assignedExecutive,
+    assignedExecutives: attempt.receipt?.allocations
+      ?.map((allocation) => allocation.invoice?.assignedExecutive)
+      .filter(Boolean),
+    title: missingVerifiedEmail
+      ? "Customer email not verified"
+      : "Automated email delivery issue",
+    message: `${attempt.customer.name} · ${reference} · ${attempt.recipient || "No verified customer email"} · ${attempt.errorCode || attempt.errorMessage || attempt.status}.`,
+    createdAt: attempt.attemptedAt || attempt.createdAt,
+  };
+};
+
 const isVisibleToUser = (event, access) => {
   if (event.organisationId !== access.organisationId) return false;
   if (access.canViewOrganisation) return true;
@@ -111,22 +135,33 @@ export const mapAutomatedEmailReminders = (reminders, attempts) => {
       return {
         id: reminder.id,
         customerName: reminder.customer?.name || "",
-        recipient: attempt?.recipient || reminder.customer?.email || "",
+        recipient: attempt?.recipient || "",
         invoiceNumber: reminder.invoice?.invoiceNumber || "",
         subject: reminder.subject || "",
         scheduledFor: reminder.scheduledFor,
+        customerTimeZone:
+          reminder.customer?.portalAccount?.timeZone || "Asia/Kolkata",
         sentAt:
           attempt?.acceptedAt ||
-          attempt?.attemptedAt ||
           reminder.sentAt ||
           null,
-        deliveryStatus: attempt?.status || reminder.deliveryStatus || "PENDING",
-        failureStatus: failed
-          ? attempt?.errorCode ||
-            attempt?.errorMessage ||
-            reminder.lastError ||
-            "Email delivery failed"
-          : null,
+        lastAttemptAt: attempt?.attemptedAt || null,
+        nextAttemptAt: reminder.nextAttemptAt || null,
+        attemptCount: attempt?.attemptCount ?? reminder.attemptCount ?? 0,
+        deliveryStatus:
+          reminder.status === "FAILED" &&
+          attempt?.status === "RETRY_SCHEDULED"
+            ? "FAILED"
+            : attempt?.status || reminder.deliveryStatus || "PENDING",
+        failureStatus:
+          failed ||
+          attempt?.status === "DELIVERY_UNKNOWN" ||
+          attempt?.status === "DISABLED"
+            ? attempt?.errorCode ||
+              attempt?.errorMessage ||
+              reminder.lastError ||
+              "Email delivery failed"
+            : null,
       };
     });
 };

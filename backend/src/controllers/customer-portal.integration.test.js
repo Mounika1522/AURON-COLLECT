@@ -9,7 +9,10 @@ import customerAuthRoutes from "../routes/customer-auth.routes.js";
 import customerPortalRoutes from "../routes/customer-portal.routes.js";
 import customerRoutes from "../routes/customer.routes.js";
 import { hashCustomerEmailOtp } from "../services/customer-email-otp.js";
-import { notifyCustomerInvoice } from "../services/customer-portal-notification.service.js";
+import {
+  notifyCustomerInvoice,
+  notifyCustomerReminder
+} from "../services/customer-portal-notification.service.js";
 
 const hashToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
@@ -210,6 +213,15 @@ test("customer portal registration, verification, isolation, password reset, and
       }),
       2
     );
+    const verificationAttempts = await prisma.emailDeliveryAttempt.findMany({
+      where: { customerId: customer.id, purpose: "EMAIL_VERIFICATION" },
+      select: { recipient: true },
+      orderBy: { createdAt: "asc" }
+    });
+    assert.deepEqual(
+      verificationAttempts.map((attempt) => attempt.recipient),
+      [email, email]
+    );
 
     const correctOtp = "654321";
     await prisma.customerPortalAccount.update({
@@ -355,6 +367,7 @@ test("customer portal registration, verification, isolation, password reset, and
     assert.equal(profile.status, 200);
     const profileData = await profile.json();
     assert.equal(profileData.profile.customer.id, customer.id);
+    assert.equal(profileData.profile.timeZone, "Asia/Kolkata");
 
     const subscriptionPlans = await get("/api/customer-portal/subscriptions");
     const subscriptionPlanData = await subscriptionPlans.json();
@@ -434,11 +447,66 @@ test("customer portal registration, verification, isolation, password reset, and
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify({ fullName: "Updated Portal Test" })
+      body: JSON.stringify({
+        fullName: "Updated Portal Test",
+        timeZone: "America/New_York"
+      })
     });
     assert.equal(profileUpdate.status, 200);
     const updatedProfile = await get("/api/customer-portal/profile");
-    assert.equal((await updatedProfile.json()).profile.fullName, "Updated Portal Test");
+    const updatedProfileData = await updatedProfile.json();
+    assert.equal(updatedProfileData.profile.fullName, "Updated Portal Test");
+    assert.equal(updatedProfileData.profile.timeZone, "America/New_York");
+    const customerReminders = await prisma.reminder.findMany({
+      where: { invoiceId: invoice.id, organisationId: organisation.id }
+    });
+    assert.equal(customerReminders.length, 3);
+    for (const reminder of customerReminders) {
+      const localHour = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hour: "2-digit",
+        hourCycle: "h23"
+      }).format(reminder.scheduledFor);
+      assert.equal(localHour, "09");
+    }
+
+    const invalidTimeZoneUpdate = await fetch(`${baseUrl}/api/customer-portal/profile`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ timeZone: "not/a-time-zone" })
+    });
+    assert.equal(invalidTimeZoneUpdate.status, 400);
+
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { email: `crm-unverified-${suffix}@example.invalid` }
+    });
+    const reminder = await prisma.reminder.create({
+      data: {
+        scheduledFor: new Date(Date.now() + 60_000),
+        channel: "EMAIL",
+        subject: "Payment due",
+        message: "Reminder message",
+        dedupeKey: `invoice:${invoice.id}:test:${suffix}:EMAIL`,
+        organisationId: organisation.id,
+        customerId: customer.id,
+        invoiceId: invoice.id
+      },
+      include: { customer: true, invoice: true }
+    });
+    const reminderResult = await notifyCustomerReminder({
+      ...reminder,
+      outstanding: 125.5
+    });
+    assert.equal(reminderResult.emailStatus, "DISABLED");
+    const reminderAttempt = await prisma.emailDeliveryAttempt.findUnique({
+      where: { reminderId: reminder.id }
+    });
+    assert.equal(reminderAttempt.recipient, email);
+    assert.equal(reminderAttempt.status, "DISABLED");
 
     const adminApi = await get("/api/customers");
     assert.equal(adminApi.status, 401);
@@ -486,6 +554,9 @@ test("customer portal registration, verification, isolation, password reset, and
         where: { customerId: { in: [customer?.id, otherCustomer?.id].filter(Boolean) } }
       });
       await prisma.customerNotification.deleteMany({
+        where: { organisationId: organisation.id }
+      });
+      await prisma.reminder.deleteMany({
         where: { organisationId: organisation.id }
       });
       await prisma.invoice.deleteMany({

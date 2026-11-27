@@ -66,7 +66,8 @@ test("organization customer plans enforce tenant isolation and separate owner ap
     const baseUrl = `http://127.0.0.1:${listener.address().port}`;
     const tokenFor = (user) => jwt.sign({
       userId: user.id,
-      organisationId: user.organisationId
+      organisationId: user.organisationId,
+      sessionVersion: user.sessionVersion
     }, jwtSecret, { expiresIn: "10m" });
     const request = (method, path, user, body) => fetch(`${baseUrl}${path}`, {
       method,

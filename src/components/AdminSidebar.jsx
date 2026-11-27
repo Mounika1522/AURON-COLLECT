@@ -15,7 +15,7 @@ export default function AdminSidebar({
   return (
     <aside
   style={{ backgroundColor: sidebarColor }}
-  className={`w-64 border-r hidden lg:flex flex-col justify-between p-3 overflow-y-auto ${bgCard}`}
+  className={`app-admin-sidebar w-64 border-r hidden lg:flex flex-col justify-between p-3 overflow-y-auto ${bgCard}`}
 >
       <div className="space-y-3">
 
@@ -42,7 +42,7 @@ export default function AdminSidebar({
         {/* Navigation */}
         <div className="space-y-1">
           <p className={`text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 ${textMuted}`}>
-            14 Enterprise Modules
+            {NAV_ITEMS.length} Workspace Modules
           </p>
 
           {NAV_ITEMS.map((item) => {
