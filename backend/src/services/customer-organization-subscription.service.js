@@ -10,6 +10,7 @@ import {
   recordCapturedPayment,
   writeBillingOrderCreatedAudit
 } from "./subscription-billing.service.js";
+import { buildTokenizedCheckoutOptions } from "./subscription-auto-renewal.service.js";
 
 export const CUSTOMER_ORGANIZATION_PLAN_CODES = Object.freeze([
   "STARTER",
@@ -59,22 +60,64 @@ export const createCustomerOrganizationBillingOrder = async ({
   customerId,
   planCode,
   billingCycle,
-  idempotencyKey
+  idempotencyKey,
+  autoRenewRequested = false,
+  contact = ""
 }, {
   db = prisma,
   env = process.env,
   createOrderRecord = createBillingOrderRecord,
   createGatewayOrder = async ({ payment, amount }) => {
     const razorpay = createRazorpayClient(env);
-    return razorpay.orders.create({
-      amount,
-      currency: payment.currency,
-      receipt: payment.id,
-      notes: {
-        billingPaymentId: payment.id,
-        planCode: payment.plan.code
+    let razorpayCustomerId = payment.razorpayCustomerId;
+    if (payment.autoRenewRequested && !razorpayCustomerId) {
+      const customer = await db.customer.findFirst({
+        where: { id: customerId, organisationId },
+        select: {
+          name: true,
+          email: true,
+          phone: true,
+          portalAccount: { select: { fullName: true, email: true } }
+        }
+      });
+      const phone = contact || customer?.phone || "";
+      if (!/^[+\d][\d\s().-]{6,19}$/.test(phone)) {
+        const error = new Error("A billing phone number is required for auto-renew.");
+        error.code = "BILLING_AUTORENEW_PHONE_REQUIRED";
+        throw error;
       }
-    });
+      const providerCustomer = await razorpay.customers.create({
+        name: customer?.portalAccount?.fullName || customer?.name || "Customer",
+        email: customer?.portalAccount?.email || customer?.email,
+        contact: phone,
+        fail_existing: "0",
+        notes: { organisationId, customerId }
+      });
+      if (typeof providerCustomer?.id !== "string" || !providerCustomer.id) {
+        throw new Error("Razorpay did not return a customer ID.");
+      }
+      razorpayCustomerId = providerCustomer.id;
+      await db.billingPayment.update({
+        where: { id: payment.id },
+        data: { razorpayCustomerId }
+      });
+      payment.razorpayCustomerId = razorpayCustomerId;
+    }
+
+    const notes = {
+      billingPaymentId: payment.id,
+      planCode: payment.plan.code
+    };
+    const request = payment.autoRenewRequested
+      ? buildTokenizedCheckoutOptions({
+          amount,
+          currency: payment.currency,
+          customerId: razorpayCustomerId,
+          receipt: payment.id,
+          notes
+        })
+      : { amount, currency: payment.currency, receipt: payment.id, notes };
+    return razorpay.orders.create(request);
   },
   saveGatewayOrder = async (payment, gatewayOrder) =>
     db.$transaction(async (tx) => {
@@ -119,7 +162,7 @@ export const createCustomerOrganizationBillingOrder = async ({
     billingCycle,
     idempotencyKey,
     db,
-    { customerId }
+    { customerId, autoRenewRequested }
   );
   const payment = record.existing || record.record;
   if (record.existing) {

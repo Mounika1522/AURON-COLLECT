@@ -359,10 +359,14 @@ export const getCurrentSubscription = async (req, res) => {
         message: "No active subscription found"
       });
     }
+    const publicSubscription = { ...subscription };
+    delete publicSubscription.razorpayCustomerId;
+    delete publicSubscription.razorpayTokenId;
+    delete publicSubscription.razorpaySubscriptionId;
     return res.status(200).json({
       success: true,
-      subscription,
-      nextRenewalAt: subscription.endsAt
+      subscription: publicSubscription,
+      nextRenewalAt: subscription.nextRenewalDate || subscription.endsAt
     });
   } catch (error) {
     console.error("Get current subscription failed:", error.code || error.name);

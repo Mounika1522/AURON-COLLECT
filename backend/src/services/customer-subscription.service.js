@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import Razorpay from "razorpay";
+import { atAsiaKolkataRenewalTime } from "./subscription-auto-renewal.service.js";
 
 const isHexSignature = (value) =>
   typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
@@ -203,6 +204,7 @@ export const recordCapturedCustomerPayment = async (
       status: "PAID",
       razorpayPaymentId: providerPayment.id,
       paymentMethod: providerPayment.method || null,
+      razorpayTokenId: payment.razorpayTokenId,
       paidAt,
       errorCode: null
     }
@@ -217,9 +219,37 @@ export const recordCapturedCustomerPayment = async (
       status: subscriptionStatus,
       startsAt: payment.periodStart,
       renewalAt: payment.periodEnd,
-      endsAt: payment.periodEnd
+      endsAt: payment.periodEnd,
+      autoRenewRequested: payment.autoRenewRequested,
+      autoRenew: Boolean(payment.autoRenewRequested && payment.razorpayTokenId),
+      razorpayCustomerId:
+        payment.razorpayCustomerId || providerPayment.customer_id || null,
+      razorpayTokenId: payment.razorpayTokenId || null,
+      paymentMethod: providerPayment.method || payment.paymentMethod || null,
+      nextRenewalDate:
+        payment.autoRenewRequested && payment.razorpayTokenId
+          ? atAsiaKolkataRenewalTime(payment.periodEnd)
+          : null,
+      lastRenewalStatus: payment.autoRenewRequested
+        ? payment.razorpayTokenId
+          ? "SCHEDULED"
+          : "TOKEN_PENDING"
+        : "NOT_SCHEDULED",
+      renewalAttempts: 0
     }
   });
+
+  if (payment.renewalSourceSubscriptionId) {
+    await tx.customerSubscription.updateMany({
+      where: {
+        id: payment.renewalSourceSubscriptionId,
+        organisationId: payment.organisationId,
+        customerId: payment.customerId,
+        status: "ACTIVE"
+      },
+      data: { status: "EXPIRED" }
+    });
+  }
 
   if (payment.periodStart > now) {
     await tx.customerSubscription.updateMany({

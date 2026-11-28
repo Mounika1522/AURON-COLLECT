@@ -115,6 +115,16 @@ export const customerEmailTemplate = (type, data) => {
           ].filter(Boolean).join(" · ")
         })
       };
+    case "SUBSCRIPTION_RENEWAL_FAILED":
+      return {
+        subject: "Subscription payment needs attention",
+        ...brandedEmail({
+          heading: "Subscription payment needs attention",
+          greeting: data.fullName,
+          message: data.message,
+          details: data.details || null
+        })
+      };
     case "PAYMENT_REMINDER":
     case "OVERDUE_REMINDER": {
       const overdue = type === "OVERDUE_REMINDER";

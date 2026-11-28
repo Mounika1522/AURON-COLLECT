@@ -169,9 +169,9 @@ test("automated email history uses email attempts and excludes manual or non-ema
       customer: { name: "Customer Two", email: "two@example.test" },
     },
     {
-      id: "sms-1",
-      dedupeKey: "due-sms:invoice-3:2026-11-21",
-      channel: "SMS",
+      id: "other-channel",
+      dedupeKey: "due-other:invoice-3:2026-11-21",
+      channel: "OTHER",
       customer: { name: "Customer Three", email: "three@example.test" },
     },
   ];

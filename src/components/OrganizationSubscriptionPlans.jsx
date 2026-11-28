@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import {
   canAccessOrganizationBillingPortal,
@@ -29,11 +29,14 @@ export default function OrganizationSubscriptionPlans({
   readOnly = false,
   customerPortalAccess = false,
   onCheckout,
+  onToggleAutoRenew,
   onContactSales,
   bgCard,
   bgSurface,
   textMuted,
 }) {
+  const [autoRenewForNextCheckout, setAutoRenewForNextCheckout] = useState(false);
+  const [billingPhone, setBillingPhone] = useState('');
   const canManageBilling =
     (customerPortalAccess || canAccessOrganizationBillingPortal(role)) &&
     !readOnly;
@@ -100,6 +103,61 @@ export default function OrganizationSubscriptionPlans({
                 } Mode.`
               : 'Checkout requires valid Razorpay Test or Live credentials for this environment.'}
           </span>
+          {currentSubscription && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <span className={textMuted}>
+                Auto-Renew: {currentSubscription.autoRenew
+                  ? 'On'
+                  : currentSubscription.autoRenewRequested
+                    ? 'Pending next checkout'
+                    : 'Off'}
+                {' · '}Next renewal: {currentSubscription.nextRenewalDate
+                  ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(new Date(currentSubscription.nextRenewalDate))
+                  : 'Not scheduled'}
+                {' · '}Payment method: {currentSubscription.paymentMethod || 'Not saved'}
+              </span>
+              {currentSubscription.status === 'ACTIVE' && onToggleAutoRenew && (
+                <button
+                  type="button"
+                  aria-pressed={Boolean(currentSubscription.autoRenew || currentSubscription.autoRenewRequested)}
+                  disabled={isProcessing}
+                  onClick={() => onToggleAutoRenew(
+                    currentSubscription,
+                    !(currentSubscription.autoRenew || currentSubscription.autoRenewRequested)
+                  )}
+                  className={`rounded-lg border px-3 py-2 font-semibold disabled:opacity-50 ${bgSurface}`}
+                >
+                  Auto-Renew {currentSubscription.autoRenew || currentSubscription.autoRenewRequested ? 'ON' : 'OFF'}
+                </button>
+              )}
+            </div>
+          )}
+          {currentSubscription?.status !== 'ACTIVE' && (
+            <label className="mt-3 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={autoRenewForNextCheckout}
+                onChange={(event) => setAutoRenewForNextCheckout(event.target.checked)}
+                disabled={isProcessing}
+                className="mt-0.5 accent-[#E50914]"
+              />
+              <span>Enable auto-renew after this regular checkout.</span>
+            </label>
+          )}
+          {(autoRenewForNextCheckout ||
+            (currentSubscription?.autoRenewRequested && !currentSubscription?.autoRenew)) &&
+            !customerPortalAccess && (
+              <label className="mt-3 block max-w-sm">
+                <span className={`text-[10px] ${textMuted}`}>Billing phone for Razorpay</span>
+                <input
+                  type="tel"
+                  autoComplete="tel"
+                  value={billingPhone}
+                  onChange={(event) => setBillingPhone(event.target.value)}
+                  className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm ${bgSurface}`}
+                />
+              </label>
+            )}
         </div>
       ) : (
         <div className={`rounded-xl border border-gray-500/20 p-4 text-xs ${bgCard} ${textMuted}`}>
@@ -202,7 +260,12 @@ export default function OrganizationSubscriptionPlans({
                 type="button"
                 onClick={() => {
                   if (isEnterprise && canManageBilling) onContactSales?.();
-                  else if (isCheckoutAvailable) onCheckout?.(backendPlan, activeBillingCycle);
+                  else if (isCheckoutAvailable) onCheckout?.(backendPlan, activeBillingCycle, {
+                    autoRenewRequested:
+                      autoRenewForNextCheckout ||
+                      Boolean(currentSubscription?.autoRenewRequested),
+                    contact: billingPhone
+                  });
                 }}
                 disabled={
                   !canManageBilling ||

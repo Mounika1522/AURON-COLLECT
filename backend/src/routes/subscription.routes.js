@@ -11,7 +11,9 @@ import {
 } from "../controllers/subscription.controller.js";
 import {
   createSubscriptionOrder,
+  disableOrganizationAutoRenew,
   downloadBillingInvoice,
+  enableOrganizationAutoRenew,
   getBillingHistory,
   verifySubscriptionPayment
 } from "../controllers/subscription-billing.controller.js";
@@ -30,6 +32,8 @@ router.get("/current", getCurrentSubscription);
 router.get("/usage", getSubscriptionUsage);
 router.post("/orders", createSubscriptionOrder);
 router.post("/orders/verify", verifySubscriptionPayment);
+router.post("/:id/enable-auto-renew", enableOrganizationAutoRenew);
+router.post("/:id/disable-auto-renew", disableOrganizationAutoRenew);
 router.get("/billing/history", getBillingHistory);
 router.get("/billing/invoices/:id/pdf", downloadBillingInvoice);
 

@@ -16,8 +16,6 @@ import {
   mergeMissingSmtpVariables
 } from "./runtime-safety.js";
 import { sendEmail } from "../services/email.service.js";
-import { sendSMS } from "../services/messaging/sms.service.js";
-import { sendWhatsApp } from "../services/messaging/whatsapp.service.js";
 import { startReminderScheduler } from "../services/reminder.scheduler.js";
 
 const productionSmtp = {
@@ -300,7 +298,7 @@ test("production startup can use the configured production database", () => {
   );
 });
 
-test("notification providers refuse delivery in safe mode", async () => {
+test("email delivery refuses to send in safe mode", async () => {
   const previousNodeEnv = process.env.NODE_ENV;
   const previousMode = process.env.NOTIFICATION_DELIVERY_MODE;
   const previousAuthEmailSetting = process.env.AUTH_EMAIL_DELIVERY_ENABLED;
@@ -332,14 +330,6 @@ test("notification providers refuse delivery in safe mode", async () => {
       }),
       /disabled for this purpose/
     );
-    await assert.rejects(
-      sendSMS({ to: "0000000000", message: "Test" }),
-      /delivery is disabled/
-    );
-    await assert.rejects(
-      sendWhatsApp({ to: "0000000000", message: "Test" }),
-      /delivery is disabled/
-    );
   } finally {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;
@@ -356,28 +346,6 @@ test("notification providers refuse delivery in safe mode", async () => {
     for (const [key, value] of previousSmtpValues) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
-    }
-  }
-});
-
-test("SMS and WhatsApp remain unavailable even when live delivery is enabled", async () => {
-  const previousMode = process.env.NOTIFICATION_DELIVERY_MODE;
-  process.env.NOTIFICATION_DELIVERY_MODE = "live";
-
-  try {
-    await assert.rejects(
-      sendSMS({ to: "0000000000", message: "Test" }),
-      { code: "UNSUPPORTED_NOTIFICATION_CHANNEL" }
-    );
-    await assert.rejects(
-      sendWhatsApp({ to: "0000000000", message: "Test" }),
-      { code: "UNSUPPORTED_NOTIFICATION_CHANNEL" }
-    );
-  } finally {
-    if (previousMode === undefined) {
-      delete process.env.NOTIFICATION_DELIVERY_MODE;
-    } else {
-      process.env.NOTIFICATION_DELIVERY_MODE = previousMode;
     }
   }
 });

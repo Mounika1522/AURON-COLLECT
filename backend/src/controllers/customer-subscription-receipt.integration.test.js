@@ -22,6 +22,7 @@ import {
 import {
   verifyCustomerSubscriptionPayment
 } from "../services/customer-subscription.service.js";
+import { getCustomerReceiptPdfFilename } from "../services/customer-receipt-pdf.service.js";
 
 const TEST_ONLY_PAYMENT_SECRET = "test-harness-payment-secret";
 const TEST_ONLY_WEBHOOK_SECRET = "test-harness-webhook-secret";
@@ -82,13 +83,21 @@ const extractPdfAttachment = (rawMessage, filename) => {
   const boundary = message.match(/boundary="?([^"\r\n;]+)"?/i)?.[1];
   assert.ok(boundary, "stream transport output must contain a MIME boundary");
 
-  const filenameIndex = message.indexOf(`filename=${filename}`);
-  assert.notEqual(filenameIndex, -1, "receipt PDF attachment filename must be present");
-  const partStart = message.lastIndexOf(`--${boundary}`, filenameIndex);
+  const attachmentIndex = message.indexOf("Content-Type: application/pdf");
+  assert.notEqual(attachmentIndex, -1, "receipt PDF attachment must be present");
+  const partStart = message.lastIndexOf(`--${boundary}`, attachmentIndex);
   assert.notEqual(partStart, -1, "receipt attachment must start at a MIME boundary");
-  const contentEnd = message.indexOf(`--${boundary}`, filenameIndex);
+  const contentEnd = message.indexOf(`--${boundary}`, attachmentIndex);
   assert.notEqual(contentEnd, -1, "receipt attachment must end at a MIME boundary");
   const attachmentPart = message.slice(partStart, contentEnd);
+  const filenameParts = [...attachmentPart.matchAll(
+    /filename(?:\*(\d+))?=(?:"([^"]*)"|([^;\r\n,]*))/gi
+  )].sort((left, right) => Number(left[1] || 0) - Number(right[1] || 0));
+  assert.equal(
+    filenameParts.map((part) => part[2] ?? part[3].trim()).join(""),
+    filename,
+    "receipt PDF attachment filename must match"
+  );
   assert.match(attachmentPart, /Content-Transfer-Encoding: base64/i);
   const headerEnd = attachmentPart.match(/\r?\n\r?\n/);
   assert.ok(headerEnd, "receipt attachment must have a MIME header/body separator");
@@ -524,7 +533,7 @@ test("test-only verified event completes the receipt pipeline without external p
     assert.equal(streamMessages.length, 1);
     const emailAttachment = extractPdfAttachment(
       streamMessages[0],
-      `${finalizedReceipt.receiptNumber}.pdf`
+      getCustomerReceiptPdfFilename(finalizedReceipt.receiptNumber)
     );
     assert.deepEqual(emailAttachment, Buffer.from(finalizedReceipt.pdfBytes));
     assert.equal(emailAttachment.subarray(0, 5).toString(), "%PDF-");

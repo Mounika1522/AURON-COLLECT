@@ -1,5 +1,10 @@
 # Authentication rate limiting
 
+## Notification channel
+
+**Notification Channel: Email Only.** Customer reminders and communication
+history use email; configure delivery through the backend SMTP variables.
+
 The staff login and organization-registration routes share an in-memory limit
 of 10 requests per IP address per 15-minute window. This is appropriate for
 local development and a single backend process; counters reset when the process

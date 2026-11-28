@@ -910,7 +910,7 @@ const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [communicationForm, setCommunicationForm] = useState({
     customerId: '',
     invoiceId: '',
-    channel: 'CALL',
+    channel: 'EMAIL',
     direction: 'OUTBOUND',
     message: '',
     outcome: '',
@@ -2360,7 +2360,7 @@ const handleCreateCommunication = async (event) => {
     setCommunicationForm({
       customerId: '',
       invoiceId: '',
-      channel: 'CALL',
+      channel: 'EMAIL',
       direction: 'OUTBOUND',
       message: '',
       outcome: '',
@@ -2714,7 +2714,8 @@ const loadRazorpayCheckout = async () => {
 
 const handleSubscriptionCheckout = async (
   plan,
-  billingCycle = activeSubscriptionBillingCycle
+  billingCycle = activeSubscriptionBillingCycle,
+  checkoutOptions = {}
 ) => {
   if (!canAccessOrganizationBillingPortal(currentRole)) {
     showToast('Only organization administrators and owners can manage SaaS billing.');
@@ -2745,6 +2746,8 @@ const handleSubscriptionCheckout = async (
       body: JSON.stringify({
         planCode: plan.code,
         billingCycle,
+        autoRenew: Boolean(checkoutOptions.autoRenewRequested),
+        contact: checkoutOptions.contact || '',
       }),
     });
 
@@ -2756,6 +2759,9 @@ const handleSubscriptionCheckout = async (
       name: 'Alpha Auron Collect',
       description: `${order.planName} subscription (${order.billingCycle.toLowerCase()})`,
       order_id: order.orderId,
+      ...(order.autoRenewRequested
+        ? { customer_id: order.customerId, recurring: true, method: 'card' }
+        : {}),
       handler: async (gatewayPayment) => {
         try {
           await apiRequest('/api/subscriptions/orders/verify', {
@@ -2790,6 +2796,29 @@ const handleSubscriptionCheckout = async (
   } catch (error) {
     console.error('Subscription checkout failed:', error);
     showToast(error.message || 'Unable to start test-mode checkout.');
+    setIsProcessingBilling(false);
+  }
+};
+
+const handleOrganizationAutoRenew = async (subscription, enabled) => {
+  if (!subscription?.id || isProcessingBilling) return;
+  setIsProcessingBilling(true);
+  try {
+    const action = enabled ? 'enable' : 'disable';
+    const response = await apiRequest(
+      `/api/subscriptions/${encodeURIComponent(subscription.id)}/${action}-auto-renew`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({}),
+      }
+    );
+    await refreshBillingDetails();
+    showToast(response.message);
+  } catch (error) {
+    console.error('Organization auto-renew update failed:', error);
+    showToast(error.message || 'Unable to update auto-renew.');
+  } finally {
     setIsProcessingBilling(false);
   }
 };
@@ -3244,8 +3273,11 @@ const handleApprovePlan = async (plan, approval) => {
           .join(', ')}), and ${broken.length} broken promise(s) flagged (${broken
           .map((p) => `${p.customerName}: ${formatDashboardCurrency(p.promisedAmount, p.currency)}`)
           .join(', ')}).`;
-      } else if (lower.includes('whatsapp') || lower.includes('sms')) {
-        reply = 'Outbound reminders are email-only. No message was sent.';
+      } else if (
+        (lower.includes('remind') || lower.includes('send')) &&
+        !lower.includes('email')
+      ) {
+        reply = 'Only email reminders are available. No email was scheduled.';
       } else if (lower.includes('remind') || lower.includes('send')) {
         await handleTriggerReminders();
         reply =
@@ -3543,7 +3575,7 @@ const handleApprovePlan = async (plan, approval) => {
     { id: 'tasks', label: 'Tasks & Follow-ups', icon: CheckSquare },
     { id: 'promises', label: 'Promise-to-Pay (PTP)', icon: Handshake },
     { id: 'disputes', label: 'Disputes Management', icon: AlertTriangle },
-    { id: 'communications', label: 'Email & Interactions', icon: MessageSquare },
+    { id: 'communications', label: 'Email Communication', icon: MessageSquare },
     { id: 'statements', label: 'Customer Statements', icon: FileSpreadsheet },
     { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
     { id: 'billing', label: 'Subscription & Billing', icon: CreditCard },
@@ -5196,7 +5228,7 @@ secondaryColor={orgSettings.secondaryColor}
                       <span>Schedule Due Email Reminders</span>
                     </button>
                     <button onClick={() => setShowCommunicationForm(true)} className={`px-4 py-2.5 rounded-xl border text-xs font-bold ${bgSurface}`}>
-                      Record Interaction
+                      Record Email Activity
                     </button>
                   </div>
                 </div>
@@ -5216,8 +5248,8 @@ secondaryColor={orgSettings.secondaryColor}
                   </div>
 
                   <div className={`p-4 rounded-xl border ${bgSurface}`}>
-                    <div className="flex items-center gap-2 font-bold text-sm"><MessageSquare className="w-5 h-5" />Recorded interactions</div>
-                    <p className={`text-xs mt-3 ${textMuted}`}>Record calls or email activity for the customer timeline. This form does not send messages.</p>
+                    <div className="flex items-center gap-2 font-bold text-sm"><MessageSquare className="w-5 h-5" />Email activity</div>
+                    <p className={`text-xs mt-3 ${textMuted}`}>Record email activity for the customer timeline. This form does not send email.</p>
                   </div>
                 </div>
 
@@ -5324,7 +5356,7 @@ secondaryColor={orgSettings.secondaryColor}
                           <p className="text-xs font-bold">{template.name}</p>
                           <button onClick={() => handleToggleReminderTemplate(template)} className={`text-[10px] ${template.isActive ? 'text-emerald-400' : 'text-amber-400'}`}>{template.isActive ? 'Active' : 'Inactive'}</button>
                         </div>
-                        <p className={`mt-1 text-[11px] ${textMuted}`}>{template.triggerStage} · {template.channel}</p>
+                        <p className={`mt-1 text-[11px] ${textMuted}`}>{template.triggerStage} · Email</p>
                       </div>
                     ))}
                   </div>
@@ -5340,10 +5372,10 @@ secondaryColor={orgSettings.secondaryColor}
               )}
 
               <div className={`p-5 rounded-2xl border ${bgCard}`}>
-                <h3 className="text-sm font-bold mb-4">Recorded Interaction Log</h3>
+                <h3 className="text-sm font-bold mb-4">Email Communication History</h3>
                 <DataTableTools
                   rows={commLogs}
-                  searchLabel="recorded interactions"
+                  searchLabel="email communication history"
                   getSearchText={(log) => [
                     log.customer,
                     log.channel,
@@ -5357,7 +5389,7 @@ secondaryColor={orgSettings.secondaryColor}
                     { key: 'status', label: 'status', getValue: (log) => log.status },
                   ]}
                   loading={isLoadingData}
-                  emptyText="No communication records were returned by the backend."
+                  emptyText="No email communication records were returned by the backend."
                 >
                   {({ rows: pageCommunicationLogs, emptyMessage }) => (
                     <div className="overflow-x-auto">
@@ -5825,6 +5857,7 @@ secondaryColor={orgSettings.secondaryColor}
                 isProcessing={isProcessingBilling}
                 isLoading={isLoadingData}
                 onCheckout={handleSubscriptionCheckout}
+                onToggleAutoRenew={handleOrganizationAutoRenew}
                 onContactSales={() => showToast('Contact Alpha Auron to discuss Enterprise pricing.')}
                 bgCard={bgCard}
                 bgSurface={bgSurface}
@@ -6112,7 +6145,7 @@ secondaryColor={orgSettings.secondaryColor}
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
       >
           <form onSubmit={handleCreateCommunication} className={`w-full max-w-lg space-y-3 rounded-2xl border p-6 ${bgCard}`}>
-            <div className="flex items-center justify-between"><h3 className="text-lg font-bold">Record Customer Interaction</h3><button type="button" onClick={() => setShowCommunicationForm(false)}><X className="h-5 w-5" /></button></div>
+            <div className="flex items-center justify-between"><h3 className="text-lg font-bold">Record Email Activity</h3><button type="button" onClick={() => setShowCommunicationForm(false)}><X className="h-5 w-5" /></button></div>
             <select required value={communicationForm.customerId} onChange={(e) => setCommunicationForm({ ...communicationForm, customerId: e.target.value, invoiceId: '' })} className={`w-full rounded-lg border p-2 text-xs ${bgSurface}`}>
               <option value="">Choose customer</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
             </select>
@@ -6120,17 +6153,15 @@ secondaryColor={orgSettings.secondaryColor}
               <option value="">No invoice linked</option>{invoices.filter((invoice) => invoice.customerId === communicationForm.customerId).map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoiceNumber}</option>)}
             </select>
             <div className="grid grid-cols-2 gap-3">
-              <select value={communicationForm.channel} onChange={(e) => setCommunicationForm({ ...communicationForm, channel: e.target.value })} className={`rounded-lg border p-2 text-xs ${bgSurface}`}>
-                {['CALL', 'EMAIL'].map((channel) => <option key={channel} value={channel}>{channel}</option>)}
-              </select>
+              <div className={`rounded-lg border p-2 text-xs ${bgSurface}`}>Email</div>
               <select value={communicationForm.direction} onChange={(e) => setCommunicationForm({ ...communicationForm, direction: e.target.value })} className={`rounded-lg border p-2 text-xs ${bgSurface}`}>
                 {['OUTBOUND', 'INBOUND'].map((direction) => <option key={direction} value={direction}>{direction}</option>)}
               </select>
             </div>
-            <textarea required placeholder="Interaction notes" value={communicationForm.message} onChange={(e) => setCommunicationForm({ ...communicationForm, message: e.target.value })} className={`min-h-24 w-full rounded-lg border p-2 text-xs ${bgSurface}`} />
+            <textarea required placeholder="Email activity notes" value={communicationForm.message} onChange={(e) => setCommunicationForm({ ...communicationForm, message: e.target.value })} className={`min-h-24 w-full rounded-lg border p-2 text-xs ${bgSurface}`} />
             <input placeholder="Outcome (optional)" value={communicationForm.outcome} onChange={(e) => setCommunicationForm({ ...communicationForm, outcome: e.target.value })} className={`w-full rounded-lg border p-2 text-xs ${bgSurface}`} />
-            <p className={`text-[11px] ${textMuted}`}>This records an interaction only; it does not send email or make a call.</p>
-            <button type="submit" className="w-full rounded-lg bg-[#E50914] py-2.5 text-xs font-bold text-white">Save Interaction</button>
+            <p className={`text-[11px] ${textMuted}`}>This records email activity only; it does not send email.</p>
+            <button type="submit" className="w-full rounded-lg bg-[#E50914] py-2.5 text-xs font-bold text-white">Save Email Activity</button>
           </form>
       </AnimatedOverlay>
 

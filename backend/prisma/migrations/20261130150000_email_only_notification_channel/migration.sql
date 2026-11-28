@@ -1,0 +1,8 @@
+ALTER TABLE "Communication"
+  ALTER COLUMN "channel" SET DEFAULT 'EMAIL';
+
+ALTER TABLE "ReminderTemplate"
+  ALTER COLUMN "channel" SET DEFAULT 'EMAIL';
+
+ALTER TABLE "Reminder"
+  ALTER COLUMN "channel" SET DEFAULT 'EMAIL';

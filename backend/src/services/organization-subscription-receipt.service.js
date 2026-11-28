@@ -32,7 +32,17 @@ const getPaidBillingPayment = (paymentId, organisationId, db) =>
     include: {
       plan: { select: { name: true } },
       invoice: true,
-      organisation: { select: { name: true } },
+      organisation: {
+        select: {
+          name: true,
+          users: {
+            where: { role: { in: ["OWNER", "ADMIN"] } },
+            orderBy: { role: "asc" },
+            take: 1,
+            select: { name: true, email: true }
+          }
+        }
+      },
       customer: { include: { portalAccount: true } }
     }
   });
@@ -189,17 +199,23 @@ export const sendOrganizationSubscriptionReceiptEmail = async (
     { db, buildPdf }
   );
   const payment = result?.payment;
-  if (!payment?.invoice || !payment.customerId || !result.receipt) {
+  if (!payment?.invoice || !result.receipt) {
     return { status: "NOT_READY" };
   }
   const account = payment.customer?.portalAccount;
-  const to =
+  const verifiedCustomerEmail =
     account?.emailVerifiedAt && typeof account.email === "string"
       ? account.email.trim()
       : "";
+  const owner = payment.organisation.users?.[0];
+  const to = verifiedCustomerEmail || owner?.email || "";
   const pdfBytes = Buffer.from(result.receipt.pdfBytes);
   const email = customerEmailTemplate("PAYMENT_RECEIPT", {
-    fullName: account?.fullName || payment.customer?.name || "Customer",
+    fullName:
+      account?.fullName ||
+      payment.customer?.name ||
+      owner?.name ||
+      "Organization administrator",
     receiptNumber: result.receipt.receiptNumber,
     currency: payment.currency,
     amount: Number(payment.amount).toFixed(2),

@@ -34,6 +34,7 @@ import { startReminderScheduler } from "./services/reminder.scheduler.js";
 import { handleRazorpayWebhook } from "./controllers/subscription-billing.controller.js";
 import { handleCustomerSubscriptionWebhook } from "./controllers/customer-subscription.controller.js";
 import { startCustomerSubscriptionScheduler } from "./services/customer-subscription.scheduler.js";
+import { startSubscriptionAutoRenewalScheduler } from "./services/subscription-auto-renewal.scheduler.js";
 
 const app = express();
 app.set('trust proxy', 1);
@@ -273,6 +274,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
   if (areBackgroundSchedulersEnabled()) {
     startCustomerSubscriptionScheduler();
+    startSubscriptionAutoRenewalScheduler();
   } else {
     console.log(
       "Non-reminder background schedulers disabled by configuration."

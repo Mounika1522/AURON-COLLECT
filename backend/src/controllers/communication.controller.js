@@ -44,7 +44,7 @@ export const createCommunication = async (req, res) => {
       ? String(direction).trim().toUpperCase()
       : "OUTBOUND";
 
-    const allowedChannels = ["CALL", "EMAIL"];
+    const allowedChannels = ["EMAIL"];
 
     const allowedDirections = ["INBOUND", "OUTBOUND"];
 
@@ -209,7 +209,7 @@ export const getCommunications = async (req, res) => {
     }
 
     const filters = {
-      channel: { in: ["CALL", "EMAIL"] }
+      channel: "EMAIL"
     };
 
     if (customerId) {
@@ -230,7 +230,7 @@ export const getCommunications = async (req, res) => {
 
       const normalizedChannel = channel.trim().toUpperCase();
 
-      const allowedChannels = ["CALL", "EMAIL"];
+      const allowedChannels = ["EMAIL"];
 
       if (!allowedChannels.includes(normalizedChannel)) {
         return res.status(400).json({
@@ -275,7 +275,7 @@ export const getCommunicationById = async (req, res) => {
     const communication = await prisma.communication.findFirst({
       where: buildCommunicationDataWhere(access, {
         id: req.params.id,
-        channel: { in: ["CALL", "EMAIL"] }
+        channel: "EMAIL"
       }),
       include: {
         customer: true,

@@ -76,7 +76,7 @@ test('maps customer, task, promise, dispute, credit and communication records', 
   assert.equal(promise.createdAt, '2026-11-01T10:00:00.000Z');
   assert.equal(mapDispute({ id: 'd1', status: 'UNDER_REVIEW' }).status, 'Under Review');
   assert.equal(mapCreditAdjustment({ id: 'a1', status: 'APPROVED' }).status, 'Approved');
-  assert.equal(mapCommunication({ id: 'm1', channel: 'WHATSAPP' }).channel, 'Whatsapp');
+  assert.equal(mapCommunication({ id: 'm1', channel: 'EMAIL' }).channel, 'Email');
   assert.equal(mapReminder({ id: 'r1', status: 'PENDING' }).status, 'Pending');
 });
 

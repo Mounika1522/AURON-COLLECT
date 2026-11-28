@@ -21,6 +21,7 @@ import {
   getOrganizationSubscriptionReceiptPdf,
   sendOrganizationSubscriptionReceiptEmail
 } from "../services/organization-subscription-receipt.service.js";
+import { atAsiaKolkataRenewalTime } from "../services/subscription-auto-renewal.service.js";
 
 const publicPlan = (record) => {
   const plan = projectSubscriptionPlanForCatalog(record);
@@ -48,6 +49,12 @@ const publicSubscription = (subscription) => subscription
       billingCycle: subscription.billingCycle,
       startsAt: subscription.startsAt,
       endsAt: subscription.endsAt,
+      autoRenew: subscription.autoRenew,
+      autoRenewRequested: subscription.autoRenewRequested,
+      nextRenewalDate: subscription.nextRenewalDate,
+      lastRenewalStatus: subscription.lastRenewalStatus,
+      renewalAttempts: subscription.renewalAttempts,
+      paymentMethod: subscription.paymentMethod,
       plan: { code: subscription.plan.code, name: subscription.plan.name }
     }
   : null;
@@ -100,6 +107,92 @@ export const getCustomerOrganizationSubscription = async (req, res) => {
   }
 };
 
+export const enableCustomerOrganizationAutoRenew = async (req, res) => {
+  try {
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        id: req.params.subscriptionId,
+        organisationId: req.customer.organisationId,
+        status: "ACTIVE",
+        payment: { is: { customerId: req.customer.customerId } }
+      }
+    });
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: "An active organization subscription was not found."
+      });
+    }
+    const hasConfirmedToken = Boolean(
+      subscription.razorpayCustomerId && subscription.razorpayTokenId
+    );
+    const updated = await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        autoRenew: hasConfirmedToken,
+        autoRenewRequested: true,
+        nextRenewalDate: hasConfirmedToken
+          ? atAsiaKolkataRenewalTime(subscription.endsAt)
+          : null,
+        lastRenewalStatus: hasConfirmedToken ? "SCHEDULED" : "TOKEN_PENDING",
+        renewalAttempts: 0
+      }
+    });
+    return res.status(200).json({
+      success: true,
+      autoRenew: updated.autoRenew,
+      autoRenewRequested: updated.autoRenewRequested,
+      nextRenewalDate: updated.nextRenewalDate,
+      message: hasConfirmedToken
+        ? "Auto-renew is enabled."
+        : "Auto-renew will activate after your next regular checkout saves a payment method."
+    });
+  } catch (error) {
+    console.error("Customer organization auto-renew enable failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to enable auto-renew."
+    });
+  }
+};
+
+export const disableCustomerOrganizationAutoRenew = async (req, res) => {
+  try {
+    const result = await prisma.subscription.updateMany({
+      where: {
+        id: req.params.subscriptionId,
+        organisationId: req.customer.organisationId,
+        status: { in: ["ACTIVE", "SCHEDULED", "PAST_DUE"] },
+        payment: { is: { customerId: req.customer.customerId } }
+      },
+      data: {
+        autoRenew: false,
+        autoRenewRequested: false,
+        nextRenewalDate: null,
+        lastRenewalStatus: "DISABLED"
+      }
+    });
+    if (result.count !== 1) {
+      return res.status(404).json({
+        success: false,
+        message: "The organization subscription was not found."
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      autoRenew: false,
+      autoRenewRequested: false,
+      message: "Auto-renew has been disabled."
+    });
+  } catch (error) {
+    console.error("Customer organization auto-renew disable failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to disable auto-renew."
+    });
+  }
+};
+
 export const createCustomerOrganizationSubscriptionOrder = async (
   req,
   res,
@@ -121,7 +214,9 @@ export const createCustomerOrganizationSubscriptionOrder = async (
       customerId: req.customer.customerId,
       planCode,
       billingCycle,
-      idempotencyKey
+      idempotencyKey,
+      autoRenewRequested: req.body?.autoRenew === true,
+      contact: typeof req.body?.contact === "string" ? req.body.contact.trim() : ""
     });
     const payment = result.payment;
     return res.status(result.existing ? 200 : 201).json({
@@ -129,6 +224,8 @@ export const createCustomerOrganizationSubscriptionOrder = async (
       alreadyPaid: result.alreadyPaid,
       paymentId: payment.id,
       orderId: payment.razorpayOrderId,
+      customerId: payment.razorpayCustomerId,
+      autoRenewRequested: payment.autoRenewRequested,
       keyId: process.env.RAZORPAY_KEY_ID,
       amount: amountInPaise(payment.amount),
       currency: payment.currency,
@@ -137,6 +234,12 @@ export const createCustomerOrganizationSubscriptionOrder = async (
       effectiveAt: payment.effectiveAt
     });
   } catch (error) {
+    if (error.code === "BILLING_AUTORENEW_PHONE_REQUIRED") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid phone number in your customer profile to enable auto-renew."
+      });
+    }
     if (error.code === "RAZORPAY_TEST_MODE_UNAVAILABLE" ||
         error.code === "RAZORPAY_CONFIGURATION_UNAVAILABLE") {
       return res.status(503).json({

@@ -96,6 +96,8 @@ export default function CustomerPortal({
     payments: []
   });
   const [billingCycle, setBillingCycle] = useState("MONTHLY");
+  const [autoRenewForNextCheckout, setAutoRenewForNextCheckout] = useState(false);
+  const [renewalPhone, setRenewalPhone] = useState("");
   const [checkoutStatus, setCheckoutStatus] = useState("");
   const [profile, setProfile] = useState(null);
   const receiptDownloadRequested = useRef(false);
@@ -153,6 +155,7 @@ export default function CustomerPortal({
     setProfile(data.profile);
     setProfileName(data.profile?.fullName || "");
     setProfileTimeZone(data.profile?.timeZone || "Asia/Kolkata");
+    setRenewalPhone(data.profile?.customer?.phone || "");
     setSubscriptionData({
       plans: data.subscriptionData?.plans || [],
       subscriptions: data.subscriptionData?.subscriptions || [],
@@ -373,7 +376,14 @@ export default function CustomerPortal({
       const order = await request("/api/customer-portal/subscriptions/checkout", {
         method: "POST",
         headers: { "Idempotency-Key": window.crypto.randomUUID() },
-        body: JSON.stringify({ planId: plan.id, billingCycle })
+        body: JSON.stringify({
+          planId: plan.id,
+          billingCycle,
+          autoRenew:
+            autoRenewForNextCheckout ||
+            Boolean(currentSubscription?.autoRenewRequested),
+          contact: renewalPhone
+        })
       });
       if (order.alreadyPaid) {
         setCheckoutStatus("This subscription payment is already confirmed.");
@@ -385,6 +395,9 @@ export default function CustomerPortal({
       const checkout = new window.Razorpay({
         key: order.keyId,
         order_id: order.orderId,
+        ...(order.autoRenewRequested
+          ? { customer_id: order.customerId, recurring: true, method: "card" }
+          : {}),
         amount: order.amount,
         currency: order.currency,
         name: "Auron Collect",
@@ -444,7 +457,11 @@ export default function CustomerPortal({
         headers: { "Idempotency-Key": `portal-${window.crypto.randomUUID()}` },
         body: JSON.stringify({
           planCode: plan.code,
-          billingCycle: "MONTHLY"
+          billingCycle: "MONTHLY",
+          autoRenew:
+            autoRenewForNextCheckout ||
+            Boolean(organizationSubscription.currentSubscription?.autoRenewRequested),
+          contact: renewalPhone
         })
       });
       if (order.alreadyPaid) {
@@ -457,6 +474,9 @@ export default function CustomerPortal({
       const checkout = new window.Razorpay({
         key: order.keyId,
         order_id: order.orderId,
+        ...(order.autoRenewRequested
+          ? { customer_id: order.customerId, recurring: true, method: "card" }
+          : {}),
         amount: order.amount,
         currency: order.currency,
         name: "Auron Collect",
@@ -534,6 +554,48 @@ export default function CustomerPortal({
     } catch (requestError) {
       if (requestError.status === 401) onSessionExpired();
       else setError(requestError.message || "Unable to update your subscription.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setCustomerSubscriptionAutoRenew = async (subscription, enabled) => {
+    setBusy(true);
+    setError("");
+    setCheckoutStatus("");
+    try {
+      const action = enabled ? "enable" : "disable";
+      const response = await request(
+        `/api/customer-portal/subscriptions/${encodeURIComponent(subscription.id)}/${action}-auto-renew`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      setCheckoutStatus(response.message);
+      setAutoRenewForNextCheckout(enabled);
+      await refreshPortalData();
+    } catch (requestError) {
+      if (requestError.status === 401) onSessionExpired();
+      else setError(requestError.message || "Unable to update auto-renew.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setOrganizationAutoRenew = async (subscription, enabled) => {
+    setBusy(true);
+    setError("");
+    setCheckoutStatus("");
+    try {
+      const action = enabled ? "enable" : "disable";
+      const response = await request(
+        `/api/customer-portal/organization-subscription/${encodeURIComponent(subscription.id)}/${action}-auto-renew`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      setCheckoutStatus(response.message);
+      setAutoRenewForNextCheckout(enabled);
+      await refreshPortalData();
+    } catch (requestError) {
+      if (requestError.status === 401) onSessionExpired();
+      else setError(requestError.message || "Unable to update auto-renew.");
     } finally {
       setBusy(false);
     }
@@ -999,21 +1061,35 @@ export default function CustomerPortal({
                 <div>
                   <h2 className="text-sm font-bold">Current subscription</h2>
                   <p className={`mt-1 text-[11px] ${textMuted}`}>
-                    Renewals are manual. No payment method is stored or charged automatically.
+                    Auto-renew is opt-in. A card token is saved during your next regular checkout; there is no separate verification charge.
                   </p>
                 </div>
                 {currentSubscription?.status === "ACTIVE" && !currentSubscription.cancelAtPeriodEnd && (
-                  <button
-                    className={`rounded-lg border px-3 py-2 text-xs ${bgSurface} disabled:opacity-60`}
-                    disabled={busy}
-                    onClick={() => cancelSubscription(currentSubscription)}
-                  >
-                    Cancel at period end
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      aria-pressed={Boolean(currentSubscription.autoRenew || currentSubscription.autoRenewRequested)}
+                      className={`rounded-lg border px-3 py-2 text-xs ${bgSurface} disabled:opacity-60`}
+                      disabled={busy}
+                      onClick={() => setCustomerSubscriptionAutoRenew(
+                        currentSubscription,
+                        !(currentSubscription.autoRenew || currentSubscription.autoRenewRequested)
+                      )}
+                    >
+                      Auto-Renew {currentSubscription.autoRenew || currentSubscription.autoRenewRequested ? "ON" : "OFF"}
+                    </button>
+                    <button
+                      className={`rounded-lg border px-3 py-2 text-xs ${bgSurface} disabled:opacity-60`}
+                      disabled={busy}
+                      onClick={() => cancelSubscription(currentSubscription)}
+                    >
+                      Cancel at period end
+                    </button>
+                  </div>
                 )}
               </div>
               {currentSubscription ? (
-                <div className={`grid gap-4 rounded-xl p-4 sm:grid-cols-2 lg:grid-cols-4 ${bgSurface}`}>
+                <div className={`grid gap-4 rounded-xl p-4 sm:grid-cols-2 lg:grid-cols-5 ${bgSurface}`}>
                   <div>
                     <p className={`text-[10px] uppercase ${textMuted}`}>Plan</p>
                     <p className="mt-1 text-sm font-bold">{currentSubscription.plan.name}</p>
@@ -1038,6 +1114,26 @@ export default function CustomerPortal({
                     </p>
                     <p className={`mt-1 text-[10px] ${textMuted}`}>Expires {formatDate(currentSubscription.expiresAt)}</p>
                   </div>
+                  <div>
+                    <p className={`text-[10px] uppercase ${textMuted}`}>Auto-renew</p>
+                    <p className="mt-1 text-xs font-semibold">
+                      {currentSubscription.autoRenew
+                        ? "On"
+                        : currentSubscription.autoRenewRequested
+                          ? "Pending next checkout"
+                          : "Off"}
+                    </p>
+                    <p className={`mt-1 text-[10px] ${textMuted}`}>
+                      Next charge: {currentSubscription.nextRenewalDate
+                        ? formatDate(currentSubscription.nextRenewalDate)
+                        : currentSubscription.autoRenewRequested
+                          ? "Pending payment-method confirmation"
+                          : "Not scheduled"}
+                    </p>
+                    <p className={`mt-1 text-[10px] ${textMuted}`}>
+                      Payment method: {currentSubscription.paymentMethod || "Not saved"}
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <p className={`rounded-xl p-4 text-xs ${bgSurface} ${textMuted}`}>
@@ -1046,9 +1142,46 @@ export default function CustomerPortal({
               )}
               {currentSubscription?.status === "ACTIVE" && (
                 <p className={`mt-3 text-[11px] ${textMuted}`}>
-                  Choosing a different plan below schedules the change for the current period end. The next period is paid manually when you submit checkout; it is not an automatic charge.
+                  {currentSubscription.autoRenewRequested && !currentSubscription.autoRenew
+                    ? "Auto-renew is requested and will activate after your next successful regular checkout saves a card token."
+                    : currentSubscription.autoRenew
+                      ? "Auto-renew is enabled. You can turn it off at any time."
+                      : "Choosing a different plan below schedules the change for the current period end. Renewal remains manual unless you opt in."}
                 </p>
               )}
+              <div className={`mt-4 grid gap-3 rounded-xl p-3 sm:grid-cols-2 ${bgSurface}`}>
+                <label className="flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={autoRenewForNextCheckout || Boolean(currentSubscription?.autoRenewRequested)}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      if (currentSubscription?.status === "ACTIVE") {
+                        void setCustomerSubscriptionAutoRenew(currentSubscription, enabled);
+                      } else {
+                        setAutoRenewForNextCheckout(enabled);
+                      }
+                    }}
+                    disabled={busy}
+                    className="mt-0.5 accent-[#E50914]"
+                  />
+                  <span>
+                    Save my card and enable auto-renew after the next regular checkout.
+                    No separate verification payment is charged.
+                  </span>
+                </label>
+                <label className={`text-xs ${textMuted}`}>
+                  Billing phone
+                  <input
+                    type="tel"
+                    autoComplete="tel"
+                    value={renewalPhone}
+                    onChange={(event) => setRenewalPhone(event.target.value)}
+                    className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm ${bgCard}`}
+                    placeholder="Enter a phone number for Razorpay"
+                  />
+                </label>
+              </div>
             </section>
 
             <section className={panelClass}>
@@ -1061,6 +1194,7 @@ export default function CustomerPortal({
                 isProcessing={busy}
                 isLoading={loading}
                 onCheckout={startOrganizationSubscriptionCheckout}
+                onToggleAutoRenew={setOrganizationAutoRenew}
                 onContactSales={onOrganizationContactSales}
                 bgCard={bgCard}
                 bgSurface={bgSurface}

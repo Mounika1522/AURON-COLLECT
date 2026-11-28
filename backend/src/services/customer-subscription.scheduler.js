@@ -14,6 +14,7 @@ export const settleDueCustomerSubscriptions = async (now = new Date()) => {
     where: {
       status: "ACTIVE",
       cancelAtPeriodEnd: false,
+      autoRenew: false,
       endsAt: { lte: now }
     },
     data: { status: "EXPIRED" }

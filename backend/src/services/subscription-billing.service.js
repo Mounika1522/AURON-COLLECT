@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../config/prisma.js";
 import { getOfficialSubscriptionPlan } from "./official-subscription-plans.js";
+import { atAsiaKolkataRenewalTime } from "./subscription-auto-renewal.service.js";
 
 const paiseFor = (amount) =>
   new Prisma.Decimal(amount).mul(100).toDecimalPlaces(0).toNumber();
@@ -67,7 +68,23 @@ export const recordCapturedPayment = async (
       startsAt: serviceStartsAt,
       endsAt: serviceEndsAt,
       billingAmount: current.amount,
-      currency: current.currency
+      currency: current.currency,
+      autoRenewRequested: current.autoRenewRequested,
+      autoRenew: Boolean(current.autoRenewRequested && current.razorpayTokenId),
+      razorpayCustomerId:
+        current.razorpayCustomerId || gatewayPayment.customer_id || null,
+      razorpayTokenId: current.razorpayTokenId || null,
+      paymentMethod: gatewayPayment.method || current.paymentMethod || null,
+      nextRenewalDate:
+        current.autoRenewRequested && current.razorpayTokenId
+          ? atAsiaKolkataRenewalTime(serviceEndsAt)
+          : null,
+      lastRenewalStatus: current.autoRenewRequested
+        ? current.razorpayTokenId
+          ? "SCHEDULED"
+          : "TOKEN_PENDING"
+        : "NOT_SCHEDULED",
+      renewalAttempts: 0
     }
   });
 
@@ -84,10 +101,23 @@ export const recordCapturedPayment = async (
       effectiveAt: serviceStartsAt,
       periodEndsAt: serviceEndsAt,
       subscriptionId: subscription.id,
+      razorpayTokenId: current.razorpayTokenId,
+      paymentMethod: gatewayPayment.method || current.paymentMethod,
       errorCode: null
     },
     include: { plan: true, subscription: true }
   });
+
+  if (current.renewalSourceSubscriptionId) {
+    await tx.subscription.updateMany({
+      where: {
+        id: current.renewalSourceSubscriptionId,
+        organisationId: current.organisationId,
+        status: "ACTIVE"
+      },
+      data: { status: "EXPIRED" }
+    });
+  }
 
   const invoice = await tx.billingInvoice.create({
     data: {
@@ -158,6 +188,7 @@ export const getCurrentSubscriptionForOrganisation = async (
     where: {
       organisationId,
       status: "ACTIVE",
+      autoRenew: false,
       endsAt: { lte: now }
     },
     data: { status: "EXPIRED" }
@@ -187,7 +218,7 @@ export const getCurrentSubscriptionForOrganisation = async (
       organisationId,
       status: "ACTIVE",
       startsAt: { lte: now },
-      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }, { autoRenew: true }]
     },
     include: { plan: true },
     orderBy: { startsAt: "desc" }
@@ -201,7 +232,12 @@ export const createBillingOrderRecord = async (
   billingCycle,
   idempotencyKey,
   db = prisma,
-  { customerId = null } = {}
+  {
+    customerId = null,
+    autoRenewRequested = false,
+    razorpayCustomerId = null,
+    renewalSourceSubscriptionId = null
+  } = {}
 ) => db.$transaction(
   async (tx) => {
     await tx.$queryRaw`
@@ -328,7 +364,19 @@ export const createBillingOrderRecord = async (
         idempotencyKey,
         effectiveAt,
         periodEndsAt: addBillingPeriod(effectiveAt, billingCycle),
-        createdBy: userId
+        createdBy: userId,
+        autoRenewRequested:
+          autoRenewRequested || Boolean(currentSubscription?.autoRenewRequested),
+        razorpayCustomerId:
+          razorpayCustomerId || currentSubscription?.razorpayCustomerId || null,
+        razorpayTokenId: currentSubscription?.razorpayTokenId || null,
+        paymentMethod: currentSubscription?.paymentMethod || null,
+        renewalSourceSubscriptionId:
+          renewalSourceSubscriptionId ||
+          (currentSubscription?.autoRenewRequested &&
+          currentSubscription?.razorpayTokenId
+            ? currentSubscription.id
+            : null)
       },
       include: { plan: true }
     });

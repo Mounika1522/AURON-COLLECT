@@ -43,16 +43,16 @@ model Organisation {
 }
 
 model User {
-  id                     String                  @id @default(uuid())
+  id                     String                   @id @default(uuid())
   name                   String
   email                  String
   password               String
-  role                   String                  @default("USER")
+  role                   String                   @default("USER")
   organisationId         String
-  createdAt              DateTime                @default(now())
-  sessionVersion         Int                     @default(0)
+  createdAt              DateTime                 @default(now())
+  sessionVersion         Int                      @default(0)
   adminNotificationReads AdminNotificationRead[]
-  organisation           Organisation            @relation(fields: [organisationId], references: [id])
+  organisation           Organisation             @relation(fields: [organisationId], references: [id])
   passwordResetToken     StaffPasswordResetToken?
 
   @@unique([email, organisationId])
@@ -96,7 +96,7 @@ model Customer {
   subscriptions             CustomerSubscription[]
   subscriptionInvoices      CustomerSubscriptionInvoice[]
   subscriptionPayments      CustomerSubscriptionPayment[]
-  billingPayments            BillingPayment[]
+  billingPayments           BillingPayment[]
   subscriptionReceipts      CustomerSubscriptionReceipt[]
   subscriptionWebhookEvents CustomerSubscriptionWebhookEvent[]
   disputes                  Dispute[]
@@ -298,7 +298,7 @@ model Dispute {
 
 model Communication {
   id             String       @id @default(uuid())
-  channel        String
+  channel        String       @default("EMAIL")
   direction      String       @default("OUTBOUND")
   subject        String?
   message        String
@@ -326,7 +326,7 @@ model ReminderTemplate {
   id             String       @id @default(uuid())
   name           String
   triggerStage   String
-  channel        String
+  channel        String       @default("EMAIL")
   subject        String?
   body           String
   isActive       Boolean      @default(true)
@@ -346,7 +346,7 @@ model Reminder {
   scheduledFor         DateTime
   sentAt               DateTime?
   status               String                @default("PENDING")
-  channel              String
+  channel              String                @default("EMAIL")
   subject              String?
   message              String
   dedupeKey            String
@@ -410,57 +410,73 @@ model SubscriptionPlan {
 }
 
 model Subscription {
-  id             String           @id @default(uuid())
-  organisationId String
-  planId         String
-  status         String           @default("ACTIVE")
-  billingCycle   String           @default("MONTHLY")
-  startsAt       DateTime         @default(now())
-  endsAt         DateTime?
-  trialEndsAt    DateTime?
-  cancelledAt    DateTime?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  billingAmount  Decimal?         @db.Decimal(14, 2)
-  currency       String           @default("INR")
-  payment        BillingPayment?
-  organisation   Organisation     @relation(fields: [organisationId], references: [id])
-  plan           SubscriptionPlan @relation(fields: [planId], references: [id])
+  id                     String           @id @default(uuid())
+  organisationId         String
+  planId                 String
+  status                 String           @default("ACTIVE")
+  billingCycle           String           @default("MONTHLY")
+  startsAt               DateTime         @default(now())
+  endsAt                 DateTime?
+  trialEndsAt            DateTime?
+  cancelledAt            DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  billingAmount          Decimal?         @db.Decimal(14, 2)
+  currency               String           @default("INR")
+  autoRenew              Boolean          @default(false)
+  autoRenewRequested     Boolean          @default(false)
+  razorpaySubscriptionId String?
+  razorpayCustomerId     String?
+  razorpayTokenId        String?
+  paymentMethod          String?
+  nextRenewalDate        DateTime?
+  lastRenewalStatus      String           @default("NOT_SCHEDULED")
+  renewalAttempts        Int              @default(0)
+  payment                BillingPayment?
+  organisation           Organisation     @relation(fields: [organisationId], references: [id])
+  plan                   SubscriptionPlan @relation(fields: [planId], references: [id])
 
   @@index([organisationId])
   @@index([planId])
   @@index([status])
   @@index([endsAt])
+  @@index([autoRenew, nextRenewalDate])
+  @@index([razorpayCustomerId])
 }
 
 model BillingPayment {
-  id                String                 @id @default(uuid())
-  organisationId    String
-  customerId        String?
-  planId            String
-  subscriptionId    String?                @unique
-  billingCycle      String
-  amount            Decimal                @db.Decimal(14, 2)
-  currency          String                 @default("INR")
-  status            String                 @default("CREATING")
-  idempotencyKey    String
-  razorpayOrderId   String?                @unique
-  razorpayPaymentId String?                @unique
-  effectiveAt       DateTime
-  periodEndsAt      DateTime
-  paidAt            DateTime?
-  createdBy         String?
-  errorCode         String?
-  createdAt         DateTime               @default(now())
-  updatedAt         DateTime               @updatedAt
-  invoice           BillingInvoice?
-  receipt           BillingPaymentReceipt?
-  emailDeliveryAttempts EmailDeliveryAttempt[]
-  customer          Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  organisation      Organisation           @relation(fields: [organisationId], references: [id])
-  plan              SubscriptionPlan       @relation(fields: [planId], references: [id])
-  subscription      Subscription?          @relation(fields: [subscriptionId], references: [id])
-  webhookEvents     RazorpayWebhookEvent[]
+  id                          String                 @id @default(uuid())
+  organisationId              String
+  customerId                  String?
+  planId                      String
+  subscriptionId              String?                @unique
+  billingCycle                String
+  amount                      Decimal                @db.Decimal(14, 2)
+  currency                    String                 @default("INR")
+  status                      String                 @default("CREATING")
+  idempotencyKey              String
+  razorpayOrderId             String?                @unique
+  razorpayPaymentId           String?                @unique
+  effectiveAt                 DateTime
+  periodEndsAt                DateTime
+  paidAt                      DateTime?
+  createdBy                   String?
+  autoRenewRequested          Boolean                @default(false)
+  razorpayCustomerId          String?
+  razorpayTokenId             String?
+  paymentMethod               String?
+  renewalSourceSubscriptionId String?
+  errorCode                   String?
+  createdAt                   DateTime               @default(now())
+  updatedAt                   DateTime               @updatedAt
+  invoice                     BillingInvoice?
+  receipt                     BillingPaymentReceipt?
+  emailDeliveryAttempts       EmailDeliveryAttempt[]
+  customer                    Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  organisation                Organisation           @relation(fields: [organisationId], references: [id])
+  plan                        SubscriptionPlan       @relation(fields: [planId], references: [id])
+  subscription                Subscription?          @relation(fields: [subscriptionId], references: [id])
+  webhookEvents               RazorpayWebhookEvent[]
 
   @@unique([organisationId, idempotencyKey])
   @@index([organisationId, status, createdAt])
@@ -488,15 +504,15 @@ model BillingInvoice {
 }
 
 model BillingPaymentReceipt {
-  id              String         @id @default(uuid())
-  organisationId  String
-  paymentId       String         @unique
-  receiptNumber   String
-  pdfBytes        Bytes
-  pdfSha256       String
-  createdAt       DateTime       @default(now())
-  organisation    Organisation   @relation(fields: [organisationId], references: [id])
-  payment         BillingPayment @relation(fields: [paymentId], references: [id])
+  id             String         @id @default(uuid())
+  organisationId String
+  paymentId      String         @unique
+  receiptNumber  String
+  pdfBytes       Bytes
+  pdfSha256      String
+  createdAt      DateTime       @default(now())
+  organisation   Organisation   @relation(fields: [organisationId], references: [id])
+  payment        BillingPayment @relation(fields: [paymentId], references: [id])
 
   @@unique([organisationId, receiptNumber])
   @@index([organisationId, createdAt])
@@ -588,6 +604,15 @@ model CustomerSubscription {
   cancelledAt            DateTime?
   createdAt              DateTime                     @default(now())
   updatedAt              DateTime                     @updatedAt
+  autoRenew              Boolean                      @default(false)
+  autoRenewRequested     Boolean                      @default(false)
+  razorpaySubscriptionId String?
+  razorpayCustomerId     String?
+  razorpayTokenId        String?
+  paymentMethod          String?
+  nextRenewalDate        DateTime?
+  lastRenewalStatus      String                       @default("NOT_SCHEDULED")
+  renewalAttempts        Int                          @default(0)
   customer               Customer                     @relation(fields: [customerId], references: [id])
   organisation           Organisation                 @relation(fields: [organisationId], references: [id])
   plan                   CustomerSubscriptionPlan     @relation(fields: [planId], references: [id])
@@ -598,37 +623,43 @@ model CustomerSubscription {
   @@index([organisationId, customerId, status], map: "CustomerSubscription_org_customer_status_idx")
   @@index([planId])
   @@index([startsAt, endsAt])
+  @@index([autoRenew, nextRenewalDate])
+  @@index([razorpayCustomerId])
 }
 
 model CustomerSubscriptionPayment {
-  id                String                             @id @default(uuid())
-  organisationId    String
-  customerId        String
-  planId            String
-  subscriptionId    String                             @unique
-  planName          String
-  billingCycle      String
-  amount            Decimal                            @db.Decimal(14, 2)
-  currency          String                             @default("INR")
-  taxTerms          String
-  status            String                             @default("CREATING")
-  idempotencyKey    String
-  razorpayOrderId   String?                            @unique
-  razorpayPaymentId String?                            @unique
-  periodStart       DateTime
-  periodEnd         DateTime
-  paidAt            DateTime?
-  errorCode         String?
-  createdAt         DateTime                           @default(now())
-  updatedAt         DateTime                           @updatedAt
-  paymentMethod     String?
-  invoice           CustomerSubscriptionInvoice?
-  customer          Customer                           @relation(fields: [customerId], references: [id])
-  organisation      Organisation                       @relation(fields: [organisationId], references: [id])
-  plan              CustomerSubscriptionPlan           @relation(fields: [planId], references: [id])
-  subscription      CustomerSubscription               @relation(fields: [subscriptionId], references: [id])
-  receipt           CustomerSubscriptionReceipt?
-  webhookEvents     CustomerSubscriptionWebhookEvent[]
+  id                          String                             @id @default(uuid())
+  organisationId              String
+  customerId                  String
+  planId                      String
+  subscriptionId              String                             @unique
+  planName                    String
+  billingCycle                String
+  amount                      Decimal                            @db.Decimal(14, 2)
+  currency                    String                             @default("INR")
+  taxTerms                    String
+  status                      String                             @default("CREATING")
+  idempotencyKey              String
+  razorpayOrderId             String?                            @unique
+  razorpayPaymentId           String?                            @unique
+  periodStart                 DateTime
+  periodEnd                   DateTime
+  paidAt                      DateTime?
+  errorCode                   String?
+  autoRenewRequested          Boolean                            @default(false)
+  razorpayCustomerId          String?
+  razorpayTokenId             String?
+  renewalSourceSubscriptionId String?
+  createdAt                   DateTime                           @default(now())
+  updatedAt                   DateTime                           @updatedAt
+  paymentMethod               String?
+  invoice                     CustomerSubscriptionInvoice?
+  customer                    Customer                           @relation(fields: [customerId], references: [id])
+  organisation                Organisation                       @relation(fields: [organisationId], references: [id])
+  plan                        CustomerSubscriptionPlan           @relation(fields: [planId], references: [id])
+  subscription                CustomerSubscription               @relation(fields: [subscriptionId], references: [id])
+  receipt                     CustomerSubscriptionReceipt?
+  webhookEvents               CustomerSubscriptionWebhookEvent[]
 
   @@unique([organisationId, customerId, idempotencyKey], map: "CustomerSubscriptionPayment_org_customer_idem_key")
   @@index([organisationId, customerId, status, createdAt], map: "CustomerSubscriptionPayment_org_customer_status_idx")

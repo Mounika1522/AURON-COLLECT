@@ -35,8 +35,8 @@ const makeResponse = () => ({
   },
 });
 
-test("communication creation rejects SMS and WhatsApp without sending or storing messages", async () => {
-  for (const channel of ["SMS", "WHATSAPP"]) {
+test("communication creation rejects non-email channels without storing messages", async () => {
+  for (const channel of ["CALL", "OTHER"]) {
     const response = makeResponse();
     await createCommunication(
       makeAuthorizedRequest({
@@ -52,7 +52,7 @@ test("communication creation rejects SMS and WhatsApp without sending or storing
 });
 
 test("reminder and template creation reject non-email delivery channels", async () => {
-  for (const channel of ["SMS", "WHATSAPP"]) {
+  for (const channel of ["CALL", "OTHER"]) {
     const reminderResponse = makeResponse();
     await createReminder(
       makeAuthorizedRequest({

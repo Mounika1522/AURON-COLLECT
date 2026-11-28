@@ -21,6 +21,8 @@ import {
 import {
   cancelCustomerSubscription,
   createCustomerSubscriptionCheckout,
+  disableCustomerSubscriptionAutoRenew,
+  enableCustomerSubscriptionAutoRenew,
   getCustomerSubscriptionBilling,
   getCustomerSubscriptionInvoicePdf,
   getCustomerSubscriptionHistoryPdf,
@@ -31,7 +33,9 @@ import {
 } from "../controllers/customer-subscription.controller.js";
 import {
   createCustomerOrganizationSubscriptionOrder,
+  disableCustomerOrganizationAutoRenew,
   downloadCustomerOrganizationSubscriptionReceipt,
+  enableCustomerOrganizationAutoRenew,
   getCustomerOrganizationSubscription,
   verifyCustomerOrganizationSubscriptionOrder
 } from "../controllers/customer-organization-subscription.controller.js";
@@ -60,7 +64,23 @@ router.patch("/notifications/:notificationId/read", markCustomerNotificationRead
 router.get("/subscriptions", getCustomerSubscriptions);
 router.post("/subscriptions/checkout", createCustomerSubscriptionCheckout);
 router.post("/subscriptions/verify", verifyCustomerSubscriptionCheckout);
+router.post(
+  "/subscriptions/:subscriptionId/enable-auto-renew",
+  enableCustomerSubscriptionAutoRenew
+);
+router.post(
+  "/subscriptions/:subscriptionId/disable-auto-renew",
+  disableCustomerSubscriptionAutoRenew
+);
 router.get("/organization-subscription", getCustomerOrganizationSubscription);
+router.post(
+  "/organization-subscription/:subscriptionId/enable-auto-renew",
+  enableCustomerOrganizationAutoRenew
+);
+router.post(
+  "/organization-subscription/:subscriptionId/disable-auto-renew",
+  disableCustomerOrganizationAutoRenew
+);
 router.post(
   "/organization-subscription/orders",
   createCustomerOrganizationSubscriptionOrder

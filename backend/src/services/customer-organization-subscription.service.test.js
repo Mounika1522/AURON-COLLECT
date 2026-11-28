@@ -83,7 +83,10 @@ test("customer organization checkout uses only official monthly plan records and
   assert.equal(orderRecordArgs[1], null);
   assert.equal(orderRecordArgs[2], "GROWTH");
   assert.equal(orderRecordArgs[3], "MONTHLY");
-  assert.deepEqual(orderRecordArgs[6], { customerId: "customer-from-session" });
+  assert.deepEqual(orderRecordArgs[6], {
+    customerId: "customer-from-session",
+    autoRenewRequested: false
+  });
   assert.equal(gatewayOrderInput.amount, 249900);
   assert.deepEqual(savedOrder, ["billing-payment-1", "order_test_1"]);
   assert.equal(result.payment.razorpayOrderId, "order_test_1");

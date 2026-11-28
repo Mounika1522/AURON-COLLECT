@@ -12,9 +12,12 @@ import {
   recordCapturedPayment,
   writeBillingOrderCreatedAudit
 } from "../services/subscription-billing.service.js";
+import { buildTokenizedCheckoutOptions } from "../services/subscription-auto-renewal.service.js";
 import {
   sendOrganizationSubscriptionReceiptEmail
 } from "../services/organization-subscription-receipt.service.js";
+import { markRenewalFailed } from "../services/subscription-auto-renewal.scheduler.js";
+import { atAsiaKolkataRenewalTime } from "../services/subscription-auto-renewal.service.js";
 
 const isOrganisationAdmin = (req, res) => {
   if (!["ADMIN", "OWNER"].includes(req.user.role)) {
@@ -85,7 +88,9 @@ export const createSubscriptionOrder = async (req, res) => {
       req.user.userId,
       planCode,
       billingCycle,
-      idempotencyKey
+      idempotencyKey,
+      prisma,
+      { autoRenewRequested: req.body?.autoRenew === true }
     );
   } catch (error) {
     const status = {
@@ -115,15 +120,54 @@ export const createSubscriptionOrder = async (req, res) => {
   const payment = orderRecord.existing || orderRecord.record;
   if (!orderRecord.existing) {
     try {
-      const gatewayOrder = await razorpay.orders.create({
-        amount: amountInPaise(payment.amount),
-        currency: payment.currency,
-        receipt: payment.id,
-        notes: {
-          billingPaymentId: payment.id,
-          planCode: payment.plan.code
+      let razorpayCustomerId = payment.razorpayCustomerId;
+      if (payment.autoRenewRequested && !razorpayCustomerId) {
+        const contact =
+          typeof req.body?.contact === "string" ? req.body.contact.trim() : "";
+        if (!/^[+\d][\d\s().-]{6,19}$/.test(contact)) {
+          const error = new Error("A billing phone number is required for auto-renew.");
+          error.code = "BILLING_AUTORENEW_PHONE_REQUIRED";
+          throw error;
         }
-      });
+        const providerCustomer = await razorpay.customers.create({
+          name: req.user.name,
+          email: req.user.email,
+          contact,
+          fail_existing: "0",
+          notes: { organisationId: payment.organisationId }
+        });
+        if (typeof providerCustomer?.id !== "string" || !providerCustomer.id) {
+          throw new Error("Razorpay did not return a customer ID");
+        }
+        razorpayCustomerId = providerCustomer.id;
+        await prisma.billingPayment.update({
+          where: { id: payment.id },
+          data: { razorpayCustomerId }
+        });
+      }
+
+      const amount = amountInPaise(payment.amount);
+      const orderRequest = payment.autoRenewRequested
+        ? buildTokenizedCheckoutOptions({
+            amount,
+            currency: payment.currency,
+            customerId: razorpayCustomerId,
+            receipt: payment.id,
+            notes: {
+              billingPaymentId: payment.id,
+              planCode: payment.plan.code
+            }
+          })
+        : {
+            amount,
+            currency: payment.currency,
+            receipt: payment.id,
+            notes: {
+              billingPaymentId: payment.id,
+              planCode: payment.plan.code
+            }
+          };
+      const gatewayOrder = await razorpay.orders.create(orderRequest);
 
       if (
         !gatewayOrder?.id ||
@@ -146,6 +190,7 @@ export const createSubscriptionOrder = async (req, res) => {
 
       payment.status = "CREATED";
       payment.razorpayOrderId = gatewayOrder.id;
+      payment.razorpayCustomerId = razorpayCustomerId;
     } catch (error) {
       await prisma.$transaction(async (tx) => {
         await tx.billingPayment.updateMany({
@@ -175,6 +220,8 @@ export const createSubscriptionOrder = async (req, res) => {
     success: true,
     paymentId: payment.id,
     orderId: payment.razorpayOrderId,
+    customerId: payment.razorpayCustomerId,
+    autoRenewRequested: payment.autoRenewRequested,
     keyId: process.env.RAZORPAY_KEY_ID,
     amount: amountInPaise(payment.amount),
     currency: payment.currency,
@@ -211,6 +258,12 @@ export const verifySubscriptionPayment = async (req, res) => {
     assertRazorpayConfiguration();
     gateway = createRazorpayClient();
   } catch (error) {
+    if (error.code === "BILLING_AUTORENEW_PHONE_REQUIRED") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid billing phone number to enable auto-renew."
+      });
+    }
     if (isBillingConfigurationError(error)) {
       return res.status(503).json({
         success: false,
@@ -418,6 +471,13 @@ export const createRazorpayWebhookHandler = ({
         typeof payload.event === "string" ? payload.event : "unknown";
       const gatewayPayment =
         payload.payload?.payment?.entity || null;
+      const token = payload.payload?.token?.entity || null;
+      const providerSubscription = payload.payload?.subscription?.entity || null;
+      const isSubscriptionLifecycleEvent = [
+        "subscription.charged",
+        "subscription.cancelled",
+        "subscription.paused"
+      ].includes(eventType);
       const isCapturedEvent =
         eventType === "payment.captured" &&
         gatewayPayment?.status === "captured" &&
@@ -434,9 +494,94 @@ export const createRazorpayWebhookHandler = ({
           eventType,
           organisationId: payment?.organisationId,
           billingPaymentId: payment?.id,
-          status: payment ? "RECEIVED" : "IGNORED"
+          status: payment || token || providerSubscription ? "RECEIVED" : "IGNORED"
         }
       });
+
+      if (eventType.startsWith("token.") && token?.id && token?.customer_id) {
+        const tokenData = {
+          razorpayTokenId: token.id,
+          paymentMethod: token.method || null
+        };
+        if (eventType === "token.confirmed") {
+          await tx.billingPayment.updateMany({
+            where: {
+              razorpayCustomerId: token.customer_id,
+              autoRenewRequested: true,
+              status: { in: ["CREATING", "CREATED", "PAID"] }
+            },
+            data: tokenData
+          });
+          const subscriptions = await tx.subscription.findMany({
+            where: {
+              razorpayCustomerId: token.customer_id,
+              autoRenewRequested: true,
+              status: { in: ["ACTIVE", "SCHEDULED"] }
+            },
+            select: { id: true, endsAt: true }
+          });
+          for (const subscription of subscriptions) {
+            await tx.subscription.update({
+              where: { id: subscription.id },
+              data: {
+                ...tokenData,
+                autoRenew: true,
+                nextRenewalDate: subscription.endsAt
+                  ? atAsiaKolkataRenewalTime(subscription.endsAt)
+                  : null,
+                lastRenewalStatus: "SCHEDULED"
+              }
+            });
+          }
+        } else if (["token.cancelled", "token.paused"].includes(eventType)) {
+          await tx.subscription.updateMany({
+            where: {
+              razorpayCustomerId: token.customer_id,
+              autoRenew: true
+            },
+            data: {
+              autoRenew: false,
+              nextRenewalDate: null,
+              lastRenewalStatus: eventType === "token.paused" ? "PAUSED" : "CANCELLED"
+            }
+          });
+        }
+        await tx.razorpayWebhookEvent.update({
+          where: { id: event.id },
+          data: { status: "PROCESSED", processedAt: new Date() }
+        });
+        return { status: "PROCESSED" };
+      }
+
+      if (isSubscriptionLifecycleEvent && providerSubscription?.id) {
+        const localSubscription = await tx.subscription.findFirst({
+          where: { razorpaySubscriptionId: providerSubscription.id }
+        });
+        if (localSubscription) {
+          const subscriptionData = eventType === "subscription.charged"
+            ? {
+                lastRenewalStatus: "PAID",
+                renewalAttempts: 0
+              }
+            : {
+                autoRenew: false,
+                autoRenewRequested: false,
+                nextRenewalDate: null,
+                lastRenewalStatus: eventType === "subscription.paused"
+                  ? "PAUSED"
+                  : "CANCELLED"
+              };
+          await tx.subscription.update({
+            where: { id: localSubscription.id },
+            data: subscriptionData
+          });
+        }
+        await tx.razorpayWebhookEvent.update({
+          where: { id: event.id },
+          data: { status: localSubscription ? "PROCESSED" : "IGNORED", processedAt: new Date() }
+        });
+        return { status: localSubscription ? "PROCESSED" : "IGNORED" };
+      }
 
       if (!payment) {
         await tx.razorpayWebhookEvent.update({
@@ -444,6 +589,24 @@ export const createRazorpayWebhookHandler = ({
           data: { processedAt: new Date() }
         });
         return { status: "IGNORED" };
+      }
+
+      if (eventType === "payment.failed") {
+        const isRenewal = Boolean(payment.renewalSourceSubscriptionId);
+        if (!isRenewal) {
+          await tx.billingPayment.updateMany({
+            where: { id: payment.id, status: { in: ["CREATING", "CREATED"] } },
+            data: { status: "FAILED", errorCode: "PAYMENT_FAILED" }
+          });
+        }
+        await tx.razorpayWebhookEvent.update({
+          where: { id: event.id },
+          data: { status: "PROCESSED", processedAt: new Date() }
+        });
+        return {
+          status: "PROCESSED",
+          failedRenewal: isRenewal ? payment : null
+        };
       }
 
       if (!isCapturedEvent) {
@@ -492,6 +655,9 @@ export const createRazorpayWebhookHandler = ({
       }
       return { status: capture.status, paymentId: payment.id };
     });
+    if (result.failedRenewal) {
+      await markRenewalFailed("organization", result.failedRenewal, new Date(), db);
+    }
     if (["PAID", "ALREADY_PAID"].includes(result.status)) {
       await sendReceipt(result.paymentId);
     }
@@ -518,6 +684,112 @@ export const createRazorpayWebhookHandler = ({
     return res.status(500).json({
       success: false,
       message: "Webhook processing failed"
+    });
+  }
+};
+
+export const enableOrganizationAutoRenew = async (req, res) => {
+  if (!isOrganisationAdmin(req, res)) return;
+  try {
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        id: req.params.id,
+        organisationId: req.user.organisationId,
+        status: "ACTIVE"
+      }
+    });
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: "An active organization subscription was not found."
+      });
+    }
+
+    const hasConfirmedToken = Boolean(
+      subscription.razorpayCustomerId && subscription.razorpayTokenId
+    );
+    const updated = await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        autoRenew: hasConfirmedToken,
+        autoRenewRequested: true,
+        nextRenewalDate: hasConfirmedToken
+          ? atAsiaKolkataRenewalTime(subscription.endsAt)
+          : null,
+        lastRenewalStatus: hasConfirmedToken ? "SCHEDULED" : "TOKEN_PENDING",
+        renewalAttempts: 0
+      }
+    });
+    await prisma.auditLog.create({
+      data: {
+        organisationId: req.user.organisationId,
+        actorUserId: req.user.userId,
+        action: "ORGANIZATION_SUBSCRIPTION_AUTO_RENEW_ENABLED",
+        entityType: "Subscription",
+        entityId: updated.id,
+        metadata: { active: hasConfirmedToken }
+      }
+    });
+    return res.status(200).json({
+      success: true,
+      autoRenew: updated.autoRenew,
+      autoRenewRequested: updated.autoRenewRequested,
+      nextRenewalDate: updated.nextRenewalDate,
+      message: hasConfirmedToken
+        ? "Auto-renew is enabled."
+        : "Auto-renew will activate after your next regular checkout saves a payment method."
+    });
+  } catch (error) {
+    console.error("Organization auto-renew enable failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to enable auto-renew."
+    });
+  }
+};
+
+export const disableOrganizationAutoRenew = async (req, res) => {
+  if (!isOrganisationAdmin(req, res)) return;
+  try {
+    const result = await prisma.subscription.updateMany({
+      where: {
+        id: req.params.id,
+        organisationId: req.user.organisationId,
+        status: { in: ["ACTIVE", "SCHEDULED", "PAST_DUE"] }
+      },
+      data: {
+        autoRenew: false,
+        autoRenewRequested: false,
+        nextRenewalDate: null,
+        lastRenewalStatus: "DISABLED"
+      }
+    });
+    if (result.count !== 1) {
+      return res.status(404).json({
+        success: false,
+        message: "The organization subscription was not found."
+      });
+    }
+    await prisma.auditLog.create({
+      data: {
+        organisationId: req.user.organisationId,
+        actorUserId: req.user.userId,
+        action: "ORGANIZATION_SUBSCRIPTION_AUTO_RENEW_DISABLED",
+        entityType: "Subscription",
+        entityId: req.params.id
+      }
+    });
+    return res.status(200).json({
+      success: true,
+      autoRenew: false,
+      autoRenewRequested: false,
+      message: "Auto-renew has been disabled."
+    });
+  } catch (error) {
+    console.error("Organization auto-renew disable failed:", error.code || error.name);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to disable auto-renew."
     });
   }
 };
